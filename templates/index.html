@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block content %}
+    <h1> Temperature & Humidity Dashboard</h1>
+    <div class="metric">
+        <b>Current Temperature:</b> {{ latest.Temperature }} °F
+    </div>
+    <div class="metric">
+        <b>Current Humidity:</b> {{ latest.Humidity }} %
+    </div>
+
+    <hr>
+
+    <h3>Select Date Range</h3>
+    <form method="get" action="/">
+        Start: <input type="datetime-local" name="start">
+        END: <input type="datetime-local" name="end">
+        <button type="submit">Apply</button>
+    </form>
+
+    {% if has_filter %}
+        <p><a href="/">Clear Filter</a></p>
+    {% endif %}
+
+    <hr>
+
+
+    <hr>
+    <h3>Download Filtered CSV</h3>
+    <a href="/download?start={{ request.args.get('start','') }}&end={{ request.args.get('end','') }}">
+        Download CSV
+    </a>
+
+    <hr>
+
+    <h3>Raw Data (Filtered)</h3>
+    <table boarder="1" cellpadding="5">
+        <tr>
+            <th>Time</th>
+            <th>Temperature (°F)</th>
+            <th>Humidity (%)</th>
+        </tr>
+        {% for r in filtered %}
+        <tr>
+            <td>{{ r.Time }}</td>
+            <td>{{ r.Temperature }}</td>
+            <td>{{ r.Humidity }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+{% endblock %}
