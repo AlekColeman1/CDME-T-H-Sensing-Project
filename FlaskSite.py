@@ -9,6 +9,7 @@ import os
 import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
+from flask import jsonify, request
 
 
 
@@ -171,5 +172,29 @@ def download():
         as_attachment=True,
         download_name="FilteredData.csv"
     )
+@app.route("/data")
+def data():
+    start = request.args.get("start")
+    end = request.args.get("end")
+
+    start_dt = None
+    end_dt = None
+
+    # datetime-local → Python datetime
+    if start:
+        start_dt = datetime.fromisoformat(start)
+    if end:
+        end_dt = datetime.fromisoformat(end)
+
+    rows = load_data_from_db(start_dt, end_dt)
+
+    return jsonify([
+        {
+            "Time": r["Time"].isoformat(),  # IMPORTANT
+            "Temperature": r["Temperature"],
+            "Humidity": r["Humidity"]
+        }
+        for r in rows
+    ])
 
 if __name__ == "__main__":app.run(host="0.0.0.0", port=5000)
