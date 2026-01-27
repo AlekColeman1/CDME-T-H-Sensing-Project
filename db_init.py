@@ -16,10 +16,11 @@ TABLES["readings"] = """
 CREATE TABLE IF NOT EXISTS readings (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     device_id VARCHAR(64) NOT NULL,
+    sensor_id VARCHAR(64) NOT NULL,
     ts TIMESTAMP(3) NOT NULL,
     temperature_c DECIMAL(6,3) NOT NULL,
     humidity_pct DECIMAL(5,2) NOT NULL,
-    INDEX idx_device_ts (device_id, ts)
+    INDEX idx_device_sensor_ts (device_id, sensor_id, ts)
 ) ENGINE=InnoDB;
 """
 

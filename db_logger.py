@@ -21,18 +21,18 @@ def get_conn():
         database=DB_NAME,
     )
 
-def log_reading(temp_c: float, humidity_pct: float):
+def log_reading(sensor_id: str, temp_c: float, humidity_pct: float):
     conn = get_conn()
     cur = conn.cursor()
 
     ts = datetime.now(timezone.utc)
 
     sql = """
-        INSERT INTO readings (device_id, ts, temperature_c, humidity_pct)
+        INSERT INTO readings (device_id, sensor_id, ts, temperature_c, humidity_pct)
         VALUES (%s, %s, %s, %s)
     """
 
-    cur.execute(sql, (DEVICE_ID, ts, float(temp_c), float(humidity_pct)))
+    cur.execute(sql, (DEVICE_ID, sensor_id, ts, float(temp_c), float(humidity_pct)))
 
     conn.commit()
     cur.close()

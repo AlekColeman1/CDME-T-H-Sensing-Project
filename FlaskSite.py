@@ -57,12 +57,8 @@ def get_conn():
         database=DB_NAME,
     )
 
-def load_data_from_db(start_dt=None, end_dt=None):
-    """
-    Query readings from the database between start_dt and end_dt.
-
-    Returns a list of dicts with keys: Time (datetime), Temperature, Humidity.
-    """
+def load_data_from_db(start_dt=None, end_dt=None, sensor_id=None):
+    
     rows = []
     try:
         conn = get_conn()
@@ -76,12 +72,15 @@ def load_data_from_db(start_dt=None, end_dt=None):
         """
         params = []
 
-        # Optional filter by device/sensor
+        # Optional filters
         if DEVICE_ID:
             query += " AND device_id = %s"
             params.append(DEVICE_ID)
 
-        # Optional time filters
+        if sensor_id:
+            query += " AND sensor_id = %s"
+            params.append(sensor_id)
+
         if start_dt is not None:
             query += " AND ts >= %s"
             params.append(start_dt)
@@ -95,7 +94,6 @@ def load_data_from_db(start_dt=None, end_dt=None):
         cur.execute(query, params)
 
         for row in cur:
-            # row['ts'] is a datetime object from MySQL
             rows.append({
                 "Time": row["ts"],
                 "Temperature": float(row["temperature_c"]),
@@ -113,7 +111,7 @@ def load_data_from_db(start_dt=None, end_dt=None):
 def home():
     data = load_data_from_db()
     if not data:
-        return "CSV file not found or empty"
+        return "No data available in database yet"
     
     data.sort(key=lambda r: r["Time"])
 
