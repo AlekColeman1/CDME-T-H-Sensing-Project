@@ -6,11 +6,13 @@
 <!-- CURRENT VALUES (from Flask) -->
 <div style="display: flex; gap: 20px; margin-bottom: 20px;">
     <div class="metric">
-        <b>Current Temperature:</b> {{ latest.Temperature }} °F
-    </div>
-    <div class="metric">
-        <b>Current Humidity:</b> {{ latest.Humidity }} %
-    </div>
+  <b>Current Temperature:</b>
+  <span id="liveTemp">{{ latest.Temperature }}</span> °F
+</div>
+<div class="metric">
+  <b>Current Humidity:</b>
+  <span id="liveHum">{{ latest.Humidity }}</span> %
+</div>
 </div>
 
 <hr>
@@ -61,53 +63,121 @@
 
 <script>
 let chart;
+let liveMode = true;
+const MAX_POINTS = 100;
 
-async function loadData() {
-    const start = document.getElementById("start").value;
-    const end = document.getElementById("end").value;
+/* --------------------
+   LIVE TOP READINGS
+-------------------- */
+async function updateLiveReadings() {
+    try {
+        const res = await fetch("/api/live");
+        const data = await res.json();
+        if (!data.Time) return;
 
-    const url = `/data?start=${start}&end=${end}`;
-    const res = await fetch(url);
-    const data = await res.json();
-
-    if (!Array.isArray(data) || data.length === 0) {
-        return;
+        document.getElementById("liveTemp").textContent =
+            data.Temperature.toFixed(1);
+        document.getElementById("liveHum").textContent =
+            data.Humidity.toFixed(1);
+    } catch (e) {
+        console.error("Live readings error", e);
     }
+}
 
-    const labels = data.map(d => d.Time);
-    const temperatures = data.map(d => d.Temperature);
-    const humidities = data.map(d => d.Humidity);
-
-    if (chart) chart.destroy();
+/* --------------------
+   INITIAL LIVE GRAPH
+-------------------- */
+async function loadLiveGraph() {
+    const res = await fetch("/api/recent?limit=" + MAX_POINTS);
+    const data = await res.json();
+    if (!data.length) return;
 
     const ctx = document.getElementById("sensorChart");
+
     chart = new Chart(ctx, {
         type: "line",
         data: {
-            labels: labels,
+            labels: data.map(d => d.Time),
             datasets: [
                 {
                     label: "Temperature (°F)",
-                    data: temperatures,
+                    data: data.map(d => d.Temperature),
                     borderColor: "red",
                     tension: 0.2
                 },
                 {
                     label: "Humidity (%)",
-                    data: humidities,
+                    data: data.map(d => d.Humidity),
                     borderColor: "blue",
                     tension: 0.2
                 }
             ]
+        },
+        options: {
+            animation: false
         }
     });
 }
 
-document.getElementById("filterForm").addEventListener("submit", function(e) {
+/* --------------------
+   LIVE GRAPH UPDATES
+-------------------- */
+async function updateLiveGraph() {
+    if (!liveMode || !chart) return;
+
+    const res = await fetch("/api/live");
+    const p = await res.json();
+    if (!p.Time) return;
+
+    const labels = chart.data.labels;
+    if (labels[labels.length - 1] === p.Time) return;
+
+    labels.push(p.Time);
+    chart.data.datasets[0].data.push(p.Temperature);
+    chart.data.datasets[1].data.push(p.Humidity);
+
+    if (labels.length > MAX_POINTS) {
+        labels.shift();
+        chart.data.datasets.forEach(ds => ds.data.shift());
+    }
+
+    chart.update("none");
+}
+
+/* --------------------
+   FILTERED GRAPH
+-------------------- */
+async function loadFilteredData() {
+    liveMode = false;
+
+    const start = document.getElementById("start").value;
+    const end = document.getElementById("end").value;
+
+    const res = await fetch(`/data?start=${start}&end=${end}`);
+    const data = await res.json();
+    if (!data.length) return;
+
+    chart.data.labels = data.map(d => d.Time);
+    chart.data.datasets[0].data = data.map(d => d.Temperature);
+    chart.data.datasets[1].data = data.map(d => d.Humidity);
+    chart.update();
+}
+
+/* --------------------
+   EVENT HANDLERS
+-------------------- */
+document.getElementById("filterForm").addEventListener("submit", e => {
     e.preventDefault();
-    loadData();
+    loadFilteredData();
 });
 
-loadData();
+/* --------------------
+   START EVERYTHING
+-------------------- */
+loadLiveGraph();
+updateLiveReadings();
+
+setInterval(updateLiveReadings, 3000); // always live
+setInterval(updateLiveGraph, 3000);    // only if liveMode
 </script>
 {% endblock %}
