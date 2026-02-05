@@ -57,8 +57,12 @@ def get_conn():
         database=DB_NAME,
     )
 
-def load_data_from_db(start_dt=None, end_dt=None, sensor_id=None):
-    
+def load_data_from_db(start_dt=None, end_dt=None):
+    """
+    Query readings from the database between start_dt and end_dt.
+
+    Returns a list of dicts with keys: Time (datetime), Temperature, Humidity.
+    """
     rows = []
     try:
         conn = get_conn()
@@ -72,15 +76,12 @@ def load_data_from_db(start_dt=None, end_dt=None, sensor_id=None):
         """
         params = []
 
-        # Optional filters
+        # Optional filter by device/sensor
         if DEVICE_ID:
             query += " AND device_id = %s"
             params.append(DEVICE_ID)
 
-        if sensor_id:
-            query += " AND sensor_id = %s"
-            params.append(sensor_id)
-
+        # Optional time filters
         if start_dt is not None:
             query += " AND ts >= %s"
             params.append(start_dt)
@@ -94,6 +95,7 @@ def load_data_from_db(start_dt=None, end_dt=None, sensor_id=None):
         cur.execute(query, params)
 
         for row in cur:
+            # row['ts'] is a datetime object from MySQL
             rows.append({
                 "Time": row["ts"],
                 "Temperature": float(row["temperature_c"]),
@@ -111,7 +113,7 @@ def load_data_from_db(start_dt=None, end_dt=None, sensor_id=None):
 def home():
     data = load_data_from_db()
     if not data:
-        return "No data available in database yet"
+        return "CSV file not found or empty"
     
     data.sort(key=lambda r: r["Time"])
 
@@ -188,7 +190,37 @@ def data():
 
     return jsonify([
         {
-            "Time": r["Time"].isoformat(),  # IMPORTANT
+            "Time": r["Time"].strftime("%Y-%m-%d %I:%M %p"),  # IMPORTANT
+            "Temperature": r["Temperature"],
+            "Humidity": r["Humidity"]
+        }
+        for r in rows
+    ])
+
+@app.route("/api/live")
+def api_live():
+    rows = load_data_from_db()
+    if not rows:
+        return jsonify({})
+
+    latest = rows[-1]
+    return jsonify({
+        "Time": latest["Time"].strftime("%m-%d %I:%M %p"),
+        "Temperature": latest["Temperature"],
+        "Humidity": latest["Humidity"]
+    })
+
+
+@app.route("/api/recent")
+def api_recent():
+    limit = int(request.args.get("limit", 50))
+
+    rows = load_data_from_db()
+    rows = rows[-limit:]
+
+    return jsonify([
+        {
+            "Time": r["Time"].strftime("%m-%d %I:%M %p"),
             "Temperature": r["Temperature"],
             "Humidity": r["Humidity"]
         }
