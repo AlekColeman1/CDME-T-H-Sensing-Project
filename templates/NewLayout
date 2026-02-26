@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+    <!-- BUX CSS -->
+    <link rel="stylesheet" href="https://assets.bux.osu.edu/v1.4.0/css/bux-styles.min.css"/>
+    <head>
+        
+        <title>Dashboard</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+        <style>
+            body { font-family: Buckeye Serif; margin: 0; background: #f9f9f9 }
+            .metric {text-align: center; font-size: 28px;}
+            .metric-container {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+            .container { max-width: 95%; margin: auto}
+            .top-row {
+                display: flex;
+                gap: 50px;
+                justify-content: center;
+                align-items: center;
+            }
+            .dateRange {
+                text-align: center;
+                margin-top: 20px;
+                padding-top: 50px;
+            }
+            .dateRange input, button, a {
+                margin: 5px;
+            }
+            .lastUpdated {
+                margin-top: 8px;
+                font-size: 10px;
+                color: #555;
+                align-self: flex-end;
+                margin-right: 445px;
+            }
+            .charts-row { display: flex; flex-wrap: wrap; gap: 30px; justify-content: center; }
+            .chart-container { flex: 1; min-width: 30%; max-width: 45%; height: 100%; padding-top: 50px;}
+            .header-bar {
+    display: grid;
+    grid-template-columns: auto 1fr auto; /* logo | center title | nav */
+    align-items: center;
+    padding: 10px 20px;
+    column-gap: 20px; /* space between items */
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+}
+
+.logo {
+    height: 175px;
+    width: auto;
+}
+
+.dashboard-title {
+    justify-self: center; /* center the title in its column */
+    text-align: center;
+}
+
+.dashboard-title h1 {
+    margin: 0;
+    /*padding-top: 100px;*/
+    padding-right: 115px;
+    font-size: 40px;
+    font-weight: normal;
+}
+
+.nav-menu {
+    justify-self: end; /* menu aligned right */
+}
+
+/* Dropdown styles remain the same */
+.nav-menu ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    
+}
+
+.nav-menu > ul > li {
+    position: relative;
+    padding-right: 100px;
+    
+}
+
+.nav-menu a {
+    text-decoration: none;   /* removes underline */
+    color: black;            /* normal text color */
+    font-weight: 600;     /* normal weight, not bold */
+    cursor: default;
+    font-size: 22px;
+    padding: 10px 16px;
+    display: inline-block;
+    cursor: pointer;
+}
+
+.nav-menu a:hover {
+    background: #eee;        /* optional hover effect */
+    color: black;            /* keep text color same */
+    border-radius: 5px;
+    cursor: pointer;
+    
+}
+
+.dropdown-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: 100%;
+    background: white;
+    min-width: 250px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.15);
+    border-radius: 6px;
+    padding: 5px 0;
+    z-index: 10;
+    
+}
+
+.dropdown-menu li a {
+    padding: 14px 20px;
+    font-size: 20px;
+    font-weight: normal;
+    
+}
+
+.dropdown:hover .dropdown-menu {
+    display: block;
+}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+    </body>
+</html>
