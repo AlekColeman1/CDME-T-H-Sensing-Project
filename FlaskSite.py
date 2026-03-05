@@ -70,10 +70,11 @@ def load_data_from_db(start_dt=None, end_dt=None):
 
         # Base query
         query = """
-            SELECT ts, temperature_c, humidity_pct
-            FROM readings
-            WHERE 1=1
+        SELECT ts, temperature_c, humidity_pct
+        FROM readings
+        WHERE sensor_id LIKE 'SEN0438:avg'
         """
+
         params = []
 
         # Optional filter by device/sensor
@@ -113,7 +114,7 @@ def load_data_from_db(start_dt=None, end_dt=None):
 def home():
     data = load_data_from_db()
     if not data:
-        return "CSV file not found or empty"
+        return "Database is empty or not accessible."
     
     data.sort(key=lambda r: r["Time"])
 
@@ -190,7 +191,7 @@ def data():
 
     return jsonify([
         {
-            "Time": r["Time"].strftime("%Y-%m-%d %I:%M %p"),  # IMPORTANT
+            "Time": r["Time"].isoformat(),  # IMPORTANT
             "Temperature": r["Temperature"],
             "Humidity": r["Humidity"]
         }
@@ -205,7 +206,7 @@ def api_live():
 
     latest = rows[-1]
     return jsonify({
-        "Time": latest["Time"].strftime("%m-%d %I:%M %p"),
+        "Time": latest["Time"].isoformat(),
         "Temperature": latest["Temperature"],
         "Humidity": latest["Humidity"]
     })
@@ -220,7 +221,7 @@ def api_recent():
 
     return jsonify([
         {
-            "Time": r["Time"].strftime("%m-%d %I:%M %p"),
+            "Time": r["Time"].isoformat(),
             "Temperature": r["Temperature"],
             "Humidity": r["Humidity"]
         }
