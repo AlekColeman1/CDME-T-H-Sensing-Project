@@ -16,13 +16,13 @@
     <nav class="nav-menu">
         <ul>
             <li class="dropdown">
-                <a href="#">Sensors ▾</a>
+                <a href="#">SENSOR ▾</a>
                 <ul class="dropdown-menu">
+                    <li><a href="/?sensor=SEN0438:avg">Room Average</a></li>
                     <li><a href="/?sensor=SEN0438:1">Sensor 1</a></li>
                     <li><a href="/?sensor=SEN0438:2">Sensor 2</a></li>
                     <li><a href="/?sensor=SEN0438:3">Sensor 3</a></li>
                     <li><a href="/?sensor=SEN0438:4">Sensor 4</a></li>
-                    <li><a href="/?sensor=SEN0438:avg">Average</a></li>
                 </ul>
             </li>
         </ul>
@@ -87,8 +87,10 @@
 
 
 <script>
+Chart.register(ChartZoom);
 let tempChart;
 let humChart;
+let currentSensor = "{{ sensor }}";
 let liveMode = true;
 const MAX_POINTS = 50;
 
@@ -97,7 +99,7 @@ const MAX_POINTS = 50;
 -------------------- */
 async function updateLiveReadings() {
     try {
-        const res = await fetch("/api/live");
+        const res = await fetch("/api/live?sensor=" + currentSensor);
         const data = await res.json();
         if (!data.Time) return;
 
@@ -122,7 +124,7 @@ async function updateLiveReadings() {
    INITIAL LIVE GRAPH
 -------------------- */
 async function loadLiveGraph() {
-    const res = await fetch("/api/recent?limit=" + MAX_POINTS);
+    const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
     const data = await res.json();
     if (!data.length) return;
 
@@ -132,11 +134,11 @@ async function loadLiveGraph() {
     tempChart = new Chart(tempCtx, {
         type: "line",
         data: {
-            labels: data.map(d => d.Time),
+            
             datasets: [
                 {
                     label: "Temperature (°F)",
-                    data: data.map(d => d.Temperature),
+                    data: data.map(d => ({x: d.Time, y: d.Temperature})),
                     borderColor: "red",
                     tension: 0.2
                 },
@@ -147,16 +149,21 @@ async function loadLiveGraph() {
             normalized: true,
             responsive: true,
             maintainedAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: "nearest"
+            },
             plugins: {
-                /*decimation: {
+                decimation: {
                     enabled: true,
                     algorithm: "lttb",
-                    samples: 1000
-                },*/
+                    samples: 500,
+                    threshold: 1000
+                },
                 zoom: {
                     pan: {
                         enabled: true,
-                        mode: "x",
+                        mode: "xy",
                         threshold: 2
                     },
                     zoom: {
@@ -166,25 +173,30 @@ async function loadLiveGraph() {
                         pinch: {
                             enabled: true
                         },
+                        
                         mode: "x"
                     }
                 }
-            }
-        },
-        scales: {
-            x: {
-                type: "time",
-                time:{
-                    displayFormats: {
-                        minute: "h:mm a",
-                        hour: "h:mm a",
-                        day: "MMM d",
+            },
+            scales: {
+                x: {
+                    type: "time",
+                    time:{
+                        displayFormats: {
+        minute: "MMM d h:mm a",
+        hour: "MMM d h:mm a",
+        day: "MMM d",
+        week: "MMM d",
+        month: "MMM yyyy",
+        year: "yyyy"
+    },
+    tooltipFormat: "MMM d yyyy h:mm a"
+                    },
+                    ticks: {
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 6
                     }
-                },
-                ticks: {
-                    maxRotation: 0,
-                    autoSkip: true,
-                    maxTicksLimit: 12
                 }
             }
         }
@@ -192,11 +204,11 @@ async function loadLiveGraph() {
     humChart = new Chart(humCtx, {
         type: "line",
         data: {
-            labels: data.map(d => d.Time),
+            
             datasets: [
                 {
                     label: "Humidity (%)",
-                    data: data.map(d => d.Humidity),
+                    data: data.map(d => ({x: d.Time, y: d.Humidity})),
                     borderColor: "blue",
                     tension: 0.2
                 },
@@ -207,16 +219,21 @@ async function loadLiveGraph() {
             normalized: true,
             responsive: true,
             maintainedAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: "nearest"
+            },
             plugins: {
-                /*decimation: {
+                decimation: {
                     enabled: true,
                     algorithm: "lttb",
-                    samples: 1000
-                },*/
+                    samples: 500,
+                    threshold: 1000
+                },
                 zoom: {
                     pan: {
                         enabled: true,
-                        mode: "x",
+                        mode: "xy",
                         threshold: 2
                     },
                     zoom: {
@@ -226,25 +243,30 @@ async function loadLiveGraph() {
                         pinch: {
                             enabled: true
                         },
+                        
                         mode: "x"
                     }
                 }
-            }
-        },
-        scales: {
-            x: {
-                type: "time",
-                time:{
-                    displayFormats: {
-                        minute: "h:mm a",
-                        hour: "h:mm a",
-                        day: "MMM d",
+            },
+            scales: {
+                x: {
+                    type: "time",
+                    time:{
+                        displayFormats: {
+        minute: "MMM d h:mm a",
+        hour: "MMM d h:mm a",
+        day: "MMM d",
+        week: "MMM d",
+        month: "MMM yyyy",
+        year: "yyyy"
+    },
+    tooltipFormat: "MMM d yyyy h:mm a"
+                    },
+                    ticks: {
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 6
                     }
-                },
-                ticks: {
-                    maxRotation: 0,
-                    autoSkip: true,
-                    maxTicksLimit: 12
                 }
             }
         }
@@ -257,20 +279,24 @@ async function loadLiveGraph() {
 async function updateLiveGraph() {
     if (!liveMode || (!tempChart || !humChart)) return;
 
-    const res = await fetch("/api/live");
+    const res = await fetch("/api/live?sensor=" + currentSensor);
     const p = await res.json();
     if (!p.Time) return;
 
-    if(tempChart.data.labels.at(-1)===p.Time) return;
-    tempChart.data.labels.push(p.Time);
-    humChart.data.labels.push(p.Time);
+    if(tempChart.data.datasets[0].data.at(-1)?.x===p.Time) return;
+    tempChart.data.datasets[0].data.push({
+        x: p.Time,
+        y: p.Temperature
+    });
 
-    tempChart.data.datasets[0].data.push(p.Temperature);
-    humChart.data.datasets[0].data.push(p.Humidity);
+    humChart.data.datasets[0].data.push({
+        x: p.Time,
+        y: p.Humidity
+    });
 
-    if (tempChart.data.labels.length > MAX_POINTS) {
-        tempChart.data.labels.shift();
-        humChart.data.labels.shift();
+
+    if (tempChart.data.datasets[0].data.length > MAX_POINTS) {
+        
         tempChart.data.datasets[0].data.shift();
         humChart.data.datasets[0].data.shift();
     }
@@ -289,16 +315,19 @@ async function loadFilteredData() {
     const start = document.getElementById("start").value;
     const end = document.getElementById("end").value;
 
-    const res = await fetch(`/data?start=${start}&end=${end}`);
+    const res = await fetch(`/data?sensor=${currentSensor}&start=${start}&end=${end}`);
     const data = await res.json();
     if (!data.length) return;
 
-    const labels = data.map(d => d.Time);
-    tempChart.data.labels = labels;
-    tempChart.data.datasets[0].data = data.map(d => d.Temperature);
+    tempChart.data.datasets[0].data = data.map(d => ({
+        x: d.Time,
+        y: d.Temperature
+    }));
 
-    humChart.data.labels = labels;
-    humChart.data.datasets[0].data = data.map(d => d.Humidity);
+    humChart.data.datasets[0].data = data.map(d => ({
+        x: d.Time,
+        y: d.Humidity
+    }));
 
     tempChart.update();
     humChart.update();
@@ -310,17 +339,19 @@ async function goLiveMode(){
     document.getElementById("start").value ="";
     document.getElementById("end").value ="";
 
-    const res = await fetch("/api/recent?limit=" + MAX_POINTS);
+    const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
     const data = await res.json();
     if(!data.length) return;
 
-    const labels = data.map(d => d.Time);
+    tempChart.data.datasets[0].data = data.map(d => ({
+        x: d.Time,
+        y: d.Temperature
+    }));
 
-    tempChart.data.labels=labels;
-    tempChart.data.datasets[0].data = data.map(d => d.Temperature);
-
-    humChart.data.labels=labels;
-    humChart.data.datasets[0].data = data.map(d => d.Humidity);
+    humChart.data.datasets[0].data = data.map(d => ({
+        x: d.Time,
+        y: d.Humidity
+    }));
 
     tempChart.update();
     humChart.update();
