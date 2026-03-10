@@ -63,6 +63,7 @@ def load_data_from_db(sensor_id, start_dt=None, end_dt=None):
 
     Returns a list of dicts with keys: Time (datetime), Temperature, Humidity.
     """
+    
     rows = []
     try:
         conn = get_conn()
