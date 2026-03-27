@@ -1,0 +1,415 @@
+from flask import Flask, render_template, request, send_file
+from datetime import datetime
+from pathlib import Path
+import csv
+import io
+import json
+import os
+
+from dotenv import load_dotenv
+
+import mysql.connector
+from mysql.connector import Error
+from dotenv import load_dotenv
+from flask import jsonify, request
+
+import smtplib
+from email.mime.text import MIMEText
+import os
+
+load_dotenv()
+
+EMAIL_HOST = os.environ.get("EMAIL_HOST")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
+EMAIL_USER = os.environ.get("EMAIL_USER")
+EMAIL_PASS = os.environ.get("EMAIL_PASS")
+ALERT_TO = os.environ.get("ALERT_TO")
+
+WARNING_BUFFER = 2.0  # early warning range
+
+SENSOR_LIMITS = {
+    "SEN0438:1": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
+    "SEN0438:2": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
+    "SEN0438:3": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
+    "SEN0438:4": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
+    "SEN0438:avg": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
+}
+
+
+def send_email_alert(sensor, alarms, temp, hum, timestamp):
+    subject = f"🚨 Sensor Alarm: {sensor}"
+    body = f"""Sensor: {sensor}
+    Time: {timestamp}
+    Temperature: {temp:.1f} F
+    Humidity: {hum:.1f} %
+Alarms: {', '.join(alarms)}
+"""
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = EMAIL_USER
+    msg['To'] = ALERT_TO
+
+    try:
+        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+        server.connect(EMAIL_HOST, EMAIL_PORT)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.send_message(msg)
+        server.quit()
+        print(f"Email sent: {sensor} {alarms}")
+    except Exception as e:
+        print("Failed to send email:", e)
+
+
+
+app = Flask(__name__)
+TIME_FORMAT = "%m/%d/%Y %H:%M"
+
+"""CSV_PATH = Path("Data.csv")
+
+def load_csv():
+    rows=[]
+    if not CSV_PATH.exists():
+        return rows
+    
+    with CSV_PATH.open("r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                timestamp = datetime.fromisoformat(row["Time"])
+                temp = float(row["Temperature"])
+                hum = float(row["Humidity"])
+                rows.append({
+                    "Time": timestamp,
+                    "Temperature": temp,
+                    "Humidity": hum
+                })
+            except:
+                continue
+    return rows"""
+load_dotenv()
+
+DB_HOST = os.environ.get("MYSQL_HOST", "localhost")
+DB_PORT = int(os.environ.get("MYSQL_PORT", 3306))
+DB_USER = os.environ.get("MYSQL_USER", "env_user")
+DB_PASS = os.environ.get("MYSQL_PASS", "env_pass")
+DB_NAME = os.environ.get("MYSQL_DB", "envmon")
+DEVICE_ID = os.environ.get("DEVICE_ID")  # optional filter by device/sensor
+
+def check_sensor_alarm(sensor, temp, hum):
+    limits = SENSOR_LIMITS.get(sensor, SENSOR_LIMITS["SEN0438:avg"])
+
+    alarms = []
+    warnings = []
+
+    # Temperature
+    if temp >= limits["temp_max"]:
+        alarms.append("TEMP HIGH")
+    elif temp <= limits["temp_min"]:
+        alarms.append("TEMP LOW")
+    elif temp >= limits["temp_max"] - WARNING_BUFFER:
+        warnings.append("Temp approaching HIGH")
+    elif temp <= limits["temp_min"] + WARNING_BUFFER:
+        warnings.append("Temp approaching LOW")
+
+    # Humidity
+    if hum >= limits["hum_max"]:
+        alarms.append("HUM HIGH")
+    elif hum <= limits["hum_min"]:
+        alarms.append("HUM LOW")
+    elif hum >= limits["hum_max"] - WARNING_BUFFER:
+        warnings.append("Humidity approaching HIGH")
+    elif hum <= limits["hum_min"] + WARNING_BUFFER:
+        warnings.append("Humidity approaching LOW")
+
+    return alarms, warnings
+
+
+def get_conn():
+    """Create and return a new MySQL connection."""
+    return mysql.connector.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASS,
+        database=DB_NAME,
+    )
+
+def load_data_from_db(sensor_id, start_dt=None, end_dt=None):
+    """
+    Query readings from the database between start_dt and end_dt.
+
+    Returns a list of dicts with keys: Time (datetime), Temperature, Humidity.
+    """
+    
+    rows = []
+    try:
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+
+        # Base query
+        query = """
+        SELECT ts, temperature_c, humidity_pct
+        FROM readings
+        WHERE sensor_id = %s
+        """
+
+        params = [sensor_id]
+
+        # Optional filter by device/sensor
+        if DEVICE_ID:
+            query += " AND device_id = %s"
+            params.append(DEVICE_ID)
+
+        # Optional time filters
+        if start_dt is not None:
+            query += " AND ts >= %s"
+            params.append(start_dt)
+
+        if end_dt is not None:
+            query += " AND ts <= %s"
+            params.append(end_dt)
+
+        query += " ORDER BY ts"
+
+        cur.execute(query, params)
+
+        for row in cur:
+            # row['ts'] is a datetime object from MySQL
+            rows.append({
+                "Time": row["ts"],
+                "Temperature": float(row["temperature_c"]),
+                "Humidity": float(row["humidity_pct"]),
+            })
+
+        cur.close()
+        conn.close()
+    except Error as e:
+        print("DB error while loading data:", e)
+
+    return rows
+
+@app.route("/", methods=["GET"])
+def home():
+    if request.args.get("sensor") == "SEN0438:1":
+        sensor = "SEN0438:1"
+    elif request.args.get("sensor") == "SEN0438:2":
+        sensor = "SEN0438:2"
+    elif request.args.get("sensor") == "SEN0438:3":
+        sensor = "SEN0438:3"
+    elif request.args.get("sensor") == "SEN0438:4":
+        sensor = "SEN0438:4"
+    else:
+        sensor = request.args.get("sensor", "SEN0438:avg")
+    data = load_data_from_db(sensor)
+    if not data:
+        return "Database is empty or not accessible."
+    
+    data.sort(key=lambda r: r["Time"])
+
+    latest = data[-1]
+
+    start_date = request.args.get("start")
+    end_date = request.args.get("end")
+
+    if start_date and end_date:
+        start_dt = datetime.fromisoformat(start_date)
+        end_dt = datetime.fromisoformat(end_date)
+        filtered = [
+            r for r in data if start_dt <= r["Time"] <= end_dt
+        ]
+    else:
+        filtered = data
+
+    labels = json.dumps([r["Time"].isoformat() for r in filtered])
+    tempData = json.dumps([r["Temperature"] for r in filtered])
+    humData = json.dumps([r["Humidity"] for r in filtered])
+    return render_template(
+        "index.html",
+        latest=latest,
+        filtered=filtered,
+        rows= data,
+        labels=labels,
+        tempData=tempData,
+        humData=humData,
+        sensor=sensor,
+        has_filter=bool(start_date and end_date)
+    )
+
+@app.route("/download")
+def download():
+    data = load_data_from_db(request.args.get("sensor", "SEN0438:avg"))
+
+    start = request.args.get("start")
+    end = request.args.get("end")
+
+    if start and end:
+        start_dt = datetime.fromisoformat(start)
+        end_dt = datetime.fromisoformat(end)
+        data = [r for r in data if start_dt <= r["Time"] <= end_dt]
+
+    output=io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Time", "Temperature", "humidity"])
+
+    for r in data:
+        writer.writerow([r["Time"].isoformat(), r["Temperature"], r["Humidity"]])
+
+    output.seek(0)
+
+    return send_file(
+        io.BytesIO(output.getvalue().encode()),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="FilteredData.csv"
+    )
+@app.route("/data")
+def data():
+    if request.args.get("sensor") == "SEN0438:1":
+        sensor = "SEN0438:1"
+    elif request.args.get("sensor") == "SEN0438:2":
+        sensor = "SEN0438:2"
+    elif request.args.get("sensor") == "SEN0438:3":
+        sensor = "SEN0438:3"
+    elif request.args.get("sensor") == "SEN0438:4":
+        sensor = "SEN0438:4"
+    else:
+        sensor = request.args.get("sensor", "SEN0438:avg")
+    start = request.args.get("start")
+    end = request.args.get("end")
+
+    start_dt = None
+    end_dt = None
+
+    # datetime-local → Python datetime
+    if start:
+        start_dt = datetime.fromisoformat(start)
+    if end:
+        end_dt = datetime.fromisoformat(end)
+
+    rows = load_data_from_db(sensor, start_dt, end_dt)
+
+    return jsonify([
+        {
+            "Time": r["Time"].isoformat(),  # IMPORTANT
+            "Temperature": r["Temperature"],
+            "Humidity": r["Humidity"]
+        }
+        for r in rows
+    ])
+
+@app.route("/api/live")
+def api_live():
+    if request.args.get("sensor") == "SEN0438:1":
+        sensor = "SEN0438:1"
+    elif request.args.get("sensor") == "SEN0438:2":
+        sensor = "SEN0438:2"
+    elif request.args.get("sensor") == "SEN0438:3":
+        sensor = "SEN0438:3"
+    elif request.args.get("sensor") == "SEN0438:4":
+        sensor = "SEN0438:4"
+    else:
+        sensor = request.args.get("sensor", "SEN0438:avg")
+    rows = load_data_from_db(sensor)
+    rows_sen1 = load_data_from_db("SEN0438:1")
+    rows_sen2 = load_data_from_db("SEN0438:2")
+    rows_sen3 = load_data_from_db("SEN0438:3")
+    rows_sen4 = load_data_from_db("SEN0438:4")
+
+    if not rows:
+        return jsonify({})
+
+    latest = rows[-1]
+
+    latest_sen1 = rows_sen1[-1] if rows_sen1 else None
+    latest_sen2 = rows_sen2[-1] if rows_sen2 else None
+    latest_sen3 = rows_sen3[-1] if rows_sen3 else None
+    latest_sen4 = rows_sen4[-1] if rows_sen4 else None
+    
+    alarms, warnings = check_sensor_alarm(
+    "SEN0438:1",
+    latest_sen1["Temperature"],
+    latest_sen1["Humidity"])
+    print("Alarms:", alarms, "Warnings:", warnings, "for sensor SEN0438:1")
+    ##send_email_alert("SEN0438:1", alarms, latest["Temperature"], latest["Humidity"], latest["Time"])
+    alarms, warnings = check_sensor_alarm(
+    "SEN0438:2",
+    latest_sen2["Temperature"],
+    latest_sen2["Humidity"])
+    print("Alarms:", alarms, "Warnings:", warnings, "for sensor SEN0438:2" )
+    ##send_email_alert("SEN0438:2", alarms, latest["Temperature"], latest["Humidity"], latest["Time"])
+    alarms, warnings = check_sensor_alarm(
+    "SEN0438:3",
+    latest_sen3["Temperature"],
+    latest_sen3["Humidity"])
+    print("Alarms:", alarms, "Warnings:", warnings, "for sensor SEN0438:3")
+    ##send_email_alert("SEN0438:3", alarms, latest["Temperature"], latest["Humidity"], latest["Time"])
+    alarms, warnings = check_sensor_alarm(
+    "SEN0438:4",
+    latest_sen4["Temperature"],
+    latest_sen4["Humidity"])
+    print("Alarms:", alarms, "Warnings:", warnings, "for sensor SEN0438:4")
+    ##send_email_alert("SEN0438:4", alarms, latest["Temperature"], latest["Humidity"], latest["Time"])
+
+
+    alarms, warnings = check_sensor_alarm(sensor, latest["Temperature"], latest["Humidity"])
+
+    return jsonify({
+        "Time": latest["Time"].isoformat(),
+        "Temperature": latest["Temperature"],
+        "Humidity": latest["Humidity"],
+        "alarms": alarms,
+        "warnings": warnings
+    })
+
+@app.route("/api/get_thresholds")
+def get_thresholds_api():
+    sensor = request.args.get("sensor", "SEN0438:avg")
+    return jsonify(SENSOR_LIMITS.get(sensor, SENSOR_LIMITS["SEN0438:avg"]))
+
+@app.route("/api/set_thresholds", methods=["POST"])
+def set_thresholds():
+    data = request.json
+    sensor = data["sensor"]
+
+    SENSOR_LIMITS[sensor] = {
+        "temp_min": data["temp_min"],
+        "temp_max": data["temp_max"],
+        "hum_min": data["hum_min"],
+        "hum_max": data["hum_max"]
+    }
+
+    return jsonify({"status": "success"})
+
+@app.route("/api/recent")
+def api_recent():
+
+
+    if request.args.get("sensor") == "SEN0438:1":
+        sensor = "SEN0438:1"
+    elif request.args.get("sensor") == "SEN0438:2":
+        sensor = "SEN0438:2"
+    elif request.args.get("sensor") == "SEN0438:3":
+        sensor = "SEN0438:3"
+    elif request.args.get("sensor") == "SEN0438:4":
+        sensor = "SEN0438:4"
+    else:
+        sensor = request.args.get("sensor", "SEN0438:avg")
+    
+    limit = int(request.args.get("limit", 50))
+
+    rows = load_data_from_db(sensor)
+    rows = rows[-limit:]
+
+    return jsonify([
+        {
+            "Time": r["Time"].isoformat(),
+            "Temperature": r["Temperature"],
+            "Humidity": r["Humidity"]
+        }
+        for r in rows
+    ])
+
+if __name__ == "__main__":app.run(host="0.0.0.0", port=5000)
