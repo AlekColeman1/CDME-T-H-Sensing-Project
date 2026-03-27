@@ -1,0 +1,498 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="header-bar">
+
+    <div class="header-left">
+        <img src="{{ url_for('static', filename='images/CDME-Stacked-RGBHEX.png') }}"
+             alt="CDME Logo"
+             class="logo">
+        
+        
+    </div>
+    <div class="dashboard-title">
+            <h1>Metal Additives Lab <br> Temperature & Humidity Dashboard</h1>
+    </div>
+    <nav class="nav-menu">
+        <ul>
+            <li class="dropdown">
+                <a href="#">SENSOR ▾</a>
+                <ul class="dropdown-menu">
+                    <li><a href="/?sensor=SEN0438:avg">Room Average</a></li>
+                    <li><a href="/?sensor=SEN0438:1">Sensor 1</a></li>
+                    <li><a href="/?sensor=SEN0438:2">Sensor 2</a></li>
+                    <li><a href="/?sensor=SEN0438:3">Sensor 3</a></li>
+                    <li><a href="/?sensor=SEN0438:4">Sensor 4</a></li>
+                </ul>
+            </li>
+        </ul>
+    </nav>
+
+</div>
+
+<div id="alarmBox" style="
+    display:none;
+    margin-top:15px;
+    padding:10px;
+    border-radius:5px;
+    text-align:center;
+    font-weight:bold;
+"></div>
+
+<hr>
+
+<!-- CURRENT VALUES (from Flask) -->
+<div class="metric-container">
+    <div class="top-row">
+        <div class="metric">
+        Current Lab Temperature:
+        <span id="liveTemp">{{ latest.Temperature }}</span> °F
+    </div>
+    <div class="metric">
+        Current Lab Humidity:
+        <span id="liveHum">{{ latest.Humidity }}</span> %
+    </div>
+    <form action="/download?sensor={{ sensor }}&start={{ request.args.get('start','') }}&end={{ request.args.get('end','') }}" method="get" style="display: inline;">
+        <button type="submit">Download CSV</button>
+    </form>
+    </div>
+    
+    <div class="lastUpdated">
+        Last Updated: 
+        <span id="liveTime">{{ latest.Time.strftime("%I:%M %p") }}</span>
+     </div>
+</div>
+
+<hr>
+
+<!--<h3>Visual Trend</h3> -->
+<div class="charts-row">
+    <div class="chart-container">
+        <canvas id="tempChart"></canvas>
+    </div>
+    
+    <div class="chart-container">
+        <canvas id="humChart"></canvas>
+    </div>
+</div>
+
+<hr>
+<div class="dateRange">
+    <h3>Select Date Range</h3>
+    <form id="filterForm">
+            Start:
+        <input type="datetime-local" id="start">
+            End:
+        <input type="datetime-local" id="end">
+        <button type="submit">Apply Filter</button>
+        <button type="button" id="liveBtn">Clear Filter</button>
+        <button type="button" id="resetZoomBtn">
+            Reset Zoom
+        </button>
+    </form>
+</div>
+
+<div class="threshold-box">
+    <h3>Alarm Settings</h3>
+
+    Temp Min: <input type="number" id="tempMin"><br>
+    Temp Max: <input type="number" id="tempMax"><br>
+    Hum Min: <input type="number" id="humMin"><br>
+    Hum Max: <input type="number" id="humMax"><br>
+
+    <button id="saveThresholds">Save Settings</button>
+</div>
+
+
+<script>
+Chart.register(ChartZoom);
+let tempChart;
+let humChart;
+let currentSensor = "{{ sensor }}";
+let liveMode = true;
+const MAX_POINTS = 50;
+
+/* --------------------
+   LIVE TOP READINGS
+-------------------- */
+async function updateLiveReadings() {
+    try {
+        const res = await fetch("/api/live?sensor=" + currentSensor);
+        const data = await res.json();
+        if (!data.Time) return;
+
+        document.getElementById("liveTemp").textContent =
+            data.Temperature.toFixed(1);
+        document.getElementById("liveHum").textContent =
+            data.Humidity.toFixed(1);
+        const dt= new Date(data.Time);
+        const formatted = dt.toLocaleString("en-US", {
+            
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true
+        });
+        document.getElementById("liveTime").textContent = formatted;
+    } catch (e) {
+        console.error("Live readings error", e);
+    }
+    const alarmBox = document.getElementById("alarmBox");
+
+if (data.alarms.length > 0) {
+    alarmBox.style.display = "block";
+    alarmBox.style.backgroundColor = "#ff4d4d";
+    alarmBox.style.color = "white";
+    alarmBox.innerHTML = "🚨 CRITICAL: " + data.alarms.join("<br>");
+}
+else if (data.warnings.length > 0) {
+    alarmBox.style.display = "block";
+    alarmBox.style.backgroundColor = "#ffd24d";
+    alarmBox.style.color = "black";
+    alarmBox.innerHTML = "⚠️ Warning: " + data.warnings.join("<br>");
+}
+else {
+    alarmBox.style.display = "none";
+}
+}
+
+async function loadThresholds() {
+    const params = new URLSearchParams(window.location.search);
+    const sensor = params.get("sensor") || "SEN0438:avg";
+
+    const res = await fetch(`/api/get_thresholds?sensor=${sensor}`);
+    const data = await res.json();
+
+    document.getElementById("tempMin").value = data.temp_min;
+    document.getElementById("tempMax").value = data.temp_max;
+    document.getElementById("humMin").value = data.hum_min;
+    document.getElementById("humMax").value = data.hum_max;
+}
+
+/* --------------------
+   INITIAL LIVE GRAPH
+-------------------- */
+async function loadLiveGraph() {
+    const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
+    const data = await res.json();
+    if (!data.length) return;
+
+    const tempCtx = document.getElementById("tempChart");
+    const humCtx = document.getElementById("humChart");
+
+    tempChart = new Chart(tempCtx, {
+        type: "line",
+        data: {
+            
+            datasets: [
+                {
+                    
+                    data: data.map(d => ({x: d.Time, y: d.Temperature})),
+                    borderColor: "red",
+                    tension: 0.2
+                },
+            ]
+        },
+        options: {
+            animation: false,
+            normalized: true,
+            responsive: true,
+            maintainedAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: "nearest"
+            },
+            plugins: {
+                legend: {
+                    display: false 
+                },
+                /*title: {
+                    display: true,
+                    text: "Temperature",
+                    font: {
+                        size: 18,
+                        weight: "bold"
+                    }
+                },*/
+                decimation: {
+                    enabled: true,
+                    algorithm: "lttb",
+                    samples: 500,
+                    threshold: 1000
+                },
+                zoom: {
+                    pan: {
+                        enabled: true,
+                        mode: "xy",
+                        threshold: 2
+                    },
+                    zoom: {
+                        wheel: {
+                            enabled: true
+                        },
+                        pinch: {
+                            enabled: true
+                        },
+                        
+                        mode: "x"
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: "time",
+                
+                    time:{
+                        displayFormats: {
+        minute: "MMM d h:mm a",
+        hour: "MMM d h:mm a",
+        day: "MMM d",
+        week: "MMM d",
+        month: "MMM yyyy",
+        year: "yyyy"
+    },
+    tooltipFormat: "MMM d yyyy h:mm a"
+                    },
+                    ticks: {
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 6
+                    }
+                },
+                y: {
+                    min: 50,
+                    max: 120,
+                    ticks: {
+                        stepSize: 10
+                    },
+                    title: {
+                        display: true,
+                        text: "Temperature (°F)"
+                    }
+                }
+            }
+        }
+    });
+    humChart = new Chart(humCtx, {
+        type: "line",
+        data: {
+            
+            datasets: [
+                {
+                   
+                    data: data.map(d => ({x: d.Time, y: d.Humidity})),
+                    borderColor: "blue",
+                    tension: 0.2
+                },
+            ]
+        },
+        options: {
+            animation: false,
+            normalized: true,
+            responsive: true,
+            maintainedAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: "nearest"
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                decimation: {
+                    enabled: true,
+                    algorithm: "lttb",
+                    samples: 500,
+                    threshold: 1000
+                },
+                zoom: {
+                    pan: {
+                        enabled: true,
+                        mode: "xy",
+                        threshold: 2
+                    },
+                    zoom: {
+                        wheel: {
+                            enabled: true
+                        },
+                        pinch: {
+                            enabled: true
+                        },
+                        
+                        mode: "x"
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: "time",
+                    
+                    time:{
+                        displayFormats: {
+        minute: "MMM d h:mm a",
+        hour: "MMM d h:mm a",
+        day: "MMM d",
+        week: "MMM d",
+        month: "MMM yyyy",
+        year: "yyyy"
+    },
+    
+    tooltipFormat: "MMM d yyyy h:mm a"
+                    },
+                    ticks: {
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 6
+                    }
+                },
+                y: {
+                    min: 0,
+                    max: 100,
+                    ticks: {
+                        stepSize: 10
+                    },
+                    title: {
+                        display: true,
+                        text: "Humidity (%)"
+                    }
+                }
+            }
+        }
+    });
+}
+
+/* --------------------
+   LIVE GRAPH UPDATES
+-------------------- */
+async function updateLiveGraph() {
+    if (!liveMode || (!tempChart || !humChart)) return;
+
+    const res = await fetch("/api/live?sensor=" + currentSensor);
+    const p = await res.json();
+    if (!p.Time) return;
+
+    if(tempChart.data.datasets[0].data.at(-1)?.x===p.Time) return;
+    tempChart.data.datasets[0].data.push({
+        x: p.Time,
+        y: p.Temperature
+    });
+
+    humChart.data.datasets[0].data.push({
+        x: p.Time,
+        y: p.Humidity
+    });
+
+
+    if (tempChart.data.datasets[0].data.length > MAX_POINTS) {
+        
+        tempChart.data.datasets[0].data.shift();
+        humChart.data.datasets[0].data.shift();
+    }
+
+    tempChart.update("none");
+    humChart.update("none");
+    
+}
+
+/* --------------------
+   FILTERED GRAPH
+-------------------- */
+async function loadFilteredData() {
+    liveMode = false;
+
+    const start = document.getElementById("start").value;
+    const end = document.getElementById("end").value;
+
+    const res = await fetch(`/data?sensor=${currentSensor}&start=${start}&end=${end}`);
+    const data = await res.json();
+    if (!data.length) return;
+
+    tempChart.data.datasets[0].data = data.map(d => ({
+        x: d.Time,
+        y: d.Temperature
+    }));
+
+    humChart.data.datasets[0].data = data.map(d => ({
+        x: d.Time,
+        y: d.Humidity
+    }));
+
+    tempChart.update();
+    humChart.update();
+}
+
+async function goLiveMode(){
+    liveMode = true
+
+    document.getElementById("start").value ="";
+    document.getElementById("end").value ="";
+
+    const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
+    const data = await res.json();
+    if(!data.length) return;
+
+    tempChart.data.datasets[0].data = data.map(d => ({
+        x: d.Time,
+        y: d.Temperature
+    }));
+
+    humChart.data.datasets[0].data = data.map(d => ({
+        x: d.Time,
+        y: d.Humidity
+    }));
+
+    tempChart.update();
+    humChart.update();
+}
+/* --------------------
+   EVENT HANDLERS
+-------------------- */
+document.getElementById("filterForm").addEventListener("submit", e => {
+    e.preventDefault();
+    loadFilteredData();
+});
+document.getElementById("liveBtn").addEventListener("click", goLiveMode);
+
+document.getElementById("resetZoomBtn").addEventListener("click", () => {
+    tempChart.resetZoom();
+    humChart.resetZoom();
+})
+
+window.addEventListener("resize", () => {
+    tempChart.resize();
+    humChart.resize();
+});
+
+document.getElementById("saveThresholds").addEventListener("click", async () => {
+    const params = new URLSearchParams(window.location.search);
+    const sensor = params.get("sensor") || "SEN0438:avg";
+
+    const payload = {
+        sensor: sensor,
+        temp_min: parseFloat(document.getElementById("tempMin").value),
+        temp_max: parseFloat(document.getElementById("tempMax").value),
+        hum_min: parseFloat(document.getElementById("humMin").value),
+        hum_max: parseFloat(document.getElementById("humMax").value)
+    };
+
+    await fetch("/api/set_thresholds", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+
+    alert("Thresholds updated!");
+});
+
+
+/* --------------------
+   START EVERYTHING
+-------------------- */
+loadLiveGraph();
+updateLiveReadings();
+updateLiveGraph();
+loadThresholds();
+
+setInterval(updateLiveReadings, 3000); // always live
+setInterval(updateLiveGraph, 3000);    // only if liveMode
+</script>
+{% endblock %}
