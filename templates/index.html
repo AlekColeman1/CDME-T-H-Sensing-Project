@@ -527,54 +527,18 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 {% endblock %}
- document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
-        const thresholds = {
-            sensor: currentSensor,
-            temp_min: parseFloat(document.getElementById("tempMin").value),
-            temp_max: parseFloat(document.getElementById("tempMax").value),
-            hum_min: parseFloat(document.getElementById("humMin").value),
-            hum_max: parseFloat(document.getElementById("humMax").value)
-        }
-        const applyAll = document.getElementById("applyAll").checked;
-        
-        let sensorLimits = {};
-        if(applyAll) {
-            thresholds.keys(SENSOR_NAMES).forEach(sensor => {
-                sensorLimits[sensor] = {
-                    thresholds
-                };
-            });
-        }else{
-            sensorLimits[currentSensor] = thresholds;
-        }
+data = request.json()
+    settings = load_settings()
 
-        const payload = {
-            warning_buffer: parseFloat(document.getElementById("warningBuffer").value),
-            reading_interval: parseFloat(document.getElementById("readingInterval").value),
-            sensor_name: {
-                "SEN0438:1": document.getElementById("name_SEN0438:1").value,
-                "SEN0438:2": document.getElementById("name_SEN0438:2").value,
-                "SEN0438:3": document.getElementById("name_SEN0438:3").value,
-                "SEN0438:4": document.getElementById("name_SEN0438:4").value,
-                "SEN0438:avg": document.getElementById("name_SEN0438:avg").value
-            },
-            sensor_limits: sensorLimits
-        };
-        const res = await fetch("/api/update_settings", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(payload)
-        });
-        const result = await res.json();
-        if(result.success) {
-            alert("Settings Saved!");
-            location.reload();
-        }else{
-            alert("Error saving settings");
-        }
-    });
-?sensor=SEN0438:2:812  POST http://127.0.0.1:5000/api/update_settings 500 (INTERNAL SERVER ERROR)
-(anonymous) @ ?sensor=SEN0438:2:812
-VM361:1 Uncaught (in promise) SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON
+    settings["WARNING_BUFFER"] = float(data["warning_buffer"])
+    settings["SENSOR-READING-INTERVAL"] = float(data["reading_interval"])
+
+    settings["SENSOR_NAMES"] = data["sensor_names"]
+
+    if "SENSOR-LIMITS" not in settings:
+        settings["SENSOR-LIMITS"] = {}
+    
+    for sensor, limits in data["sensor_limits"].items():
+        settings["SENSOR-LIMITS"][sensor] = limits
+    save_settings(settings)
+    return jsonify({"status": "success"})
