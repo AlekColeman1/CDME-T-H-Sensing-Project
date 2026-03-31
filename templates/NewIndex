@@ -16,19 +16,32 @@
     <nav class="nav-menu">
         <ul>
             <li class="dropdown">
-                <a href="#">{{sensor_name(sensor)}} ▾</a>
+               
+                <a href="#">Sensors ▾</a>
                 <ul class="dropdown-menu">
-                    <li><a href="/?sensor=SEN0438:avg">Room Average</a></li>
-                    <li><a href="/?sensor=SEN0438:1">Sensor 1</a></li>
-                    <li><a href="/?sensor=SEN0438:2">Sensor 2</a></li>
-                    <li><a href="/?sensor=SEN0438:3">Sensor 3</a></li>
-                    <li><a href="/?sensor=SEN0438:4">Sensor 4</a></li>
+                    {% for id, name in settings.SENSOR_NAMES.items() %}
+                    <li><a href="/?sensor={{ id }}">{{ name }}</a></li>
+                    
+                    
+                    {% endfor %}    
                 </ul>
+                
             </li>
         </ul>
     </nav>
-
+    <div id="settingsGear" onclick="openSettings()">
+    ⚙️
 </div>
+</div>
+
+<div id="alarmBox" style="
+    display:none;
+    margin-top:15px;
+    padding:10px;
+    border-radius:5px;
+    text-align:center;
+    font-weight:bold;
+"></div>
 
 <hr>
 
@@ -43,7 +56,7 @@
         Current Lab Humidity:
         <span id="liveHum">{{ latest.Humidity }}</span> %
     </div>
-    <form action="/download?start={{ request.args.get('start','') }}&end={{ request.args.get('end','') }}" method="get" style="display: inline;">
+    <form action="/download?sensor={{ sensor }}&start={{ request.args.get('start','') }}&end={{ request.args.get('end','') }}" method="get" style="display: inline;">
         <button type="submit">Download CSV</button>
     </form>
     </div>
@@ -83,13 +96,23 @@
     </form>
 </div>
 
+<div class="threshold-box">
+    <h3>Alarm Settings</h3>
 
+    Temp Min: <input type="number" id="tempMin" value="{{ settings['SENSOR-LIMITS'][sensor]['temp_min'] }}"><br>
+    Temp Max: <input type="number" id="tempMax" value="{{ settings['SENSOR-LIMITS'][sensor]['temp_max'] }}"><br>
+    Humidity Min: <input type="number" id="humMin" value="{{ settings['SENSOR-LIMITS'][sensor]['hum_min'] }}"><br>
+    Humidity Max: <input type="number" id="humMax" value="{{ settings['SENSOR-LIMITS'][sensor]['hum_max'] }}"><br>
+
+    <button id="saveThresholds">Save Settings</button>
+</div>
 
 
 <script>
 Chart.register(ChartZoom);
 let tempChart;
 let humChart;
+let currentSensor = "{{ sensor }}";
 let liveMode = true;
 const MAX_POINTS = 50;
 
@@ -98,7 +121,7 @@ const MAX_POINTS = 50;
 -------------------- */
 async function updateLiveReadings() {
     try {
-        const res = await fetch("/api/live");
+        const res = await fetch("/api/live?sensor=" + currentSensor);
         const data = await res.json();
         if (!data.Time) return;
 
@@ -117,13 +140,43 @@ async function updateLiveReadings() {
     } catch (e) {
         console.error("Live readings error", e);
     }
+    const alarmBox = document.getElementById("alarmBox");
+
+if (data.alarms.length > 0) {
+    alarmBox.style.display = "block";
+    alarmBox.style.backgroundColor = "#ff4d4d";
+    alarmBox.style.color = "white";
+    alarmBox.innerHTML = "🚨 CRITICAL: " + data.alarms.join("<br>");
+}
+else if (data.warnings.length > 0) {
+    alarmBox.style.display = "block";
+    alarmBox.style.backgroundColor = "#ffd24d";
+    alarmBox.style.color = "black";
+    alarmBox.innerHTML = "⚠️ Warning: " + data.warnings.join("<br>");
+}
+else {
+    alarmBox.style.display = "none";
+}
+}
+
+async function loadThresholds() {
+    const params = new URLSearchParams(window.location.search);
+    const sensor = params.get("sensor") || "SEN0438:avg";
+
+    const res = await fetch(`/api/get_thresholds?sensor=${sensor}`);
+    const data = await res.json();
+
+    document.getElementById("tempMin").value = data.temp_min;
+    document.getElementById("tempMax").value = data.temp_max;
+    document.getElementById("humMin").value = data.hum_min;
+    document.getElementById("humMax").value = data.hum_max;
 }
 
 /* --------------------
    INITIAL LIVE GRAPH
 -------------------- */
 async function loadLiveGraph() {
-    const res = await fetch("/api/recent?limit=" + MAX_POINTS);
+    const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
     const data = await res.json();
     if (!data.length) return;
 
@@ -136,7 +189,7 @@ async function loadLiveGraph() {
             
             datasets: [
                 {
-                    label: "Temperature (°F)",
+                    
                     data: data.map(d => ({x: d.Time, y: d.Temperature})),
                     borderColor: "red",
                     tension: 0.2
@@ -153,6 +206,17 @@ async function loadLiveGraph() {
                 mode: "nearest"
             },
             plugins: {
+                legend: {
+                    display: false 
+                },
+                /*title: {
+                    display: true,
+                    text: "Temperature",
+                    font: {
+                        size: 18,
+                        weight: "bold"
+                    }
+                },*/
                 decimation: {
                     enabled: true,
                     algorithm: "lttb",
@@ -180,6 +244,7 @@ async function loadLiveGraph() {
             scales: {
                 x: {
                     type: "time",
+                
                     time:{
                         displayFormats: {
         minute: "MMM d h:mm a",
@@ -196,6 +261,17 @@ async function loadLiveGraph() {
                         autoSkip: true,
                         maxTicksLimit: 6
                     }
+                },
+                y: {
+                    min: 50,
+                    max: 120,
+                    ticks: {
+                        stepSize: 10
+                    },
+                    title: {
+                        display: true,
+                        text: "Temperature (°F)"
+                    }
                 }
             }
         }
@@ -206,7 +282,7 @@ async function loadLiveGraph() {
             
             datasets: [
                 {
-                    label: "Humidity (%)",
+                   
                     data: data.map(d => ({x: d.Time, y: d.Humidity})),
                     borderColor: "blue",
                     tension: 0.2
@@ -223,6 +299,9 @@ async function loadLiveGraph() {
                 mode: "nearest"
             },
             plugins: {
+                legend: {
+                    display: false
+                },
                 decimation: {
                     enabled: true,
                     algorithm: "lttb",
@@ -250,6 +329,7 @@ async function loadLiveGraph() {
             scales: {
                 x: {
                     type: "time",
+                    
                     time:{
                         displayFormats: {
         minute: "MMM d h:mm a",
@@ -259,12 +339,24 @@ async function loadLiveGraph() {
         month: "MMM yyyy",
         year: "yyyy"
     },
+    
     tooltipFormat: "MMM d yyyy h:mm a"
                     },
                     ticks: {
                         maxRotation: 0,
                         autoSkip: true,
                         maxTicksLimit: 6
+                    }
+                },
+                y: {
+                    min: 0,
+                    max: 100,
+                    ticks: {
+                        stepSize: 10
+                    },
+                    title: {
+                        display: true,
+                        text: "Humidity (%)"
                     }
                 }
             }
@@ -278,7 +370,7 @@ async function loadLiveGraph() {
 async function updateLiveGraph() {
     if (!liveMode || (!tempChart || !humChart)) return;
 
-    const res = await fetch("/api/live");
+    const res = await fetch("/api/live?sensor=" + currentSensor);
     const p = await res.json();
     if (!p.Time) return;
 
@@ -314,7 +406,7 @@ async function loadFilteredData() {
     const start = document.getElementById("start").value;
     const end = document.getElementById("end").value;
 
-    const res = await fetch(`/data?start=${start}&end=${end}`);
+    const res = await fetch(`/data?sensor=${currentSensor}&start=${start}&end=${end}`);
     const data = await res.json();
     if (!data.length) return;
 
@@ -338,7 +430,7 @@ async function goLiveMode(){
     document.getElementById("start").value ="";
     document.getElementById("end").value ="";
 
-    const res = await fetch("/api/recent?limit=" + MAX_POINTS);
+    const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
     const data = await res.json();
     if(!data.length) return;
 
@@ -374,12 +466,41 @@ window.addEventListener("resize", () => {
     humChart.resize();
 });
 
+document.getElementById("saveThresholds").addEventListener("click", async () => {
+    const params = new URLSearchParams(window.location.search);
+    const sensor = params.get("sensor") || "SEN0438:avg";
+
+    const payload = {
+        sensor: sensor,
+        temp_min: parseFloat(document.getElementById("tempMin").value),
+        temp_max: parseFloat(document.getElementById("tempMax").value),
+        hum_min: parseFloat(document.getElementById("humMin").value),
+        hum_max: parseFloat(document.getElementById("humMax").value)
+    };
+
+    await fetch("/api/set_thresholds",{
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            sensor: currentSensor,
+            temp_min: document.getElementById("tmin").value,
+            temp_max: document.getElementById("tmax").value,
+            hum_min: document.getElementById("hmin").value,
+            hum_max: document.getElementById("hmax").value
+        })
+    });
+
+    alert("Thresholds updated!");
+});
+
+
 /* --------------------
    START EVERYTHING
 -------------------- */
 loadLiveGraph();
 updateLiveReadings();
 updateLiveGraph();
+loadThresholds();
 
 setInterval(updateLiveReadings, 3000); // always live
 setInterval(updateLiveGraph, 3000);    // only if liveMode
