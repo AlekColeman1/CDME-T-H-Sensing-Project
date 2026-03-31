@@ -527,54 +527,54 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 {% endblock %}
-function openTab(tabName) {
-        document.querySelectorAll(".tab-content").forEach(tc => tc.style.display = "none");
-        document.getElementById(tabName).style.display = "block";
-
-        document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
-        document.querySelector(`.tab-btn[onclick="openTab('${tabName}')"]`).classList.add("active");
-    }
-<div id="settingsModal" class="modal">
-    <div class="modal-content">
-        <span class="close-btn" onclick="closeSettings()">&times;</span>
-        <h2>Settings</h2>
-        <div class="tab-buttons">
-            <button class="tab-btn active" onclick="openTab('general')">General</button>
-            <button class="tab-btn" onclick="openTab('alarms')">Alarm Thresholds</button>
-            <button class="tab-btn" onclick="openTab('names')">Sensor Names</button>
-        </div>
-        <div id="general" class="tab-content">
-            <label>Warning Buffer</label>
-            <input type="number" id="warningBuffer" step="0.1">
-
-            <label>Sensor Reading Interval (seconds)</label>
-            <input type="number" id="readingInterval" step="1">
-        </div>
-        <div id="thresholds" class="tab-content" style="display:none">
-             <label>Temp Min</label>
-            <input type="number" id="tempMin">
-
-            <label>Temp Max</label>
-            <input type="number" id="tempMax">
-
-            <label>Humidity Min</label>
-            <input type="number" id="humMin">
-
-            <label>Humidity Max</label>
-            <input type="number" id="humMax">
-            <div>
-                <input type="checkbox" id="applyAll">Apply All
-            </div>
-        </div>
-        <div id="names" class="tab-content" style="display:none">
-            {% for id, name in settings.SENSOR_NAMES.items() %}
-            <div>
-                <label for="name_{{ id }}">{{ name }}</label>
-                <input type="text" id="name_{{ id }}" value="{{ name }}">
-            </div>
-            {% endfor %}
-        </div>
+ document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
+        const thresholds = {
+            sensor: currentSensor,
+            temp_min: parseFloat(document.getElementById("tempMin").value),
+            temp_max: parseFloat(document.getElementById("tempMax").value),
+            hum_min: parseFloat(document.getElementById("humMin").value),
+            hum_max: parseFloat(document.getElementById("humMax").value)
+        }
+        const applyAll = document.getElementById("applyAll").checked;
         
-        <button id="saveSettingsBtn">Save</button>
-    </div>
-</div>
+        let sensorLimits = {};
+        if(applyAll) {
+            thresholds.keys(SENSOR_NAMES).forEach(sensor => {
+                sensorLimits[sensor] = {
+                    thresholds
+                };
+            });
+        }else{
+            sensorLimits[currentSensor] = thresholds;
+        }
+
+        const payload = {
+            warning_buffer: parseFloat(document.getElementById("warningBuffer").value),
+            reading_interval: parseFloat(document.getElementById("readingInterval").value),
+            sensor_name: {
+                "SEN0438:1": document.getElementById("name_SEN0438:1").value,
+                "SEN0438:2": document.getElementById("name_SEN0438:2").value,
+                "SEN0438:3": document.getElementById("name_SEN0438:3").value,
+                "SEN0438:4": document.getElementById("name_SEN0438:4").value,
+                "SEN0438:avg": document.getElementById("name_SEN0438:avg").value
+            },
+            sensor_limits: sensorLimits
+        };
+        const res = await fetch("/api/update_settings", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        });
+        const result = await res.json();
+        if(result.success) {
+            alert("Settings Saved!");
+            location.reload();
+        }else{
+            alert("Error saving settings");
+        }
+    });
+?sensor=SEN0438:2:812  POST http://127.0.0.1:5000/api/update_settings 500 (INTERNAL SERVER ERROR)
+(anonymous) @ ?sensor=SEN0438:2:812
+VM361:1 Uncaught (in promise) SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON
