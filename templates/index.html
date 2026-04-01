@@ -99,20 +99,48 @@
     <div class="modal-content">
         <span class="close-btn" onclick="closeSettings()">&times;</span>
         <h2>Settings</h2>
-        <div class="modal-section">
-            <h3>Alarm Threshold</h3>
-            <label>Temp Min</label>
-            <input type="number" id="tempMin">
-
-            <label>Temp Max</label>
-            <input type="number" id="tempMax">
-
-            <label>Humidity Min</label>
-            <input type="number" id="humMin">
-
-            <label>Humidity Max</label>
-            <input type="number" id="humMax">
+        <div class="tab-buttons">
+            <button class="tab-btn active" onclick="openTab('general')">General</button>
+            <button class="tab-btn" onclick="openTab('thresholds')">Alarm Thresholds</button>
+            <button class="tab-btn" onclick="openTab('names')">Sensor Names</button>
         </div>
+        <div id="general" class="tab-content">
+            <div class="general-groups">
+                <label>Warning Buffer</label>
+                <input type="number" id="warningBuffer" step="0.1">
+
+                <label>Sensor Reading Interval (seconds)</label>
+                <input type="number" id="readingInterval" step="1">
+            </div>
+        </div>
+        <div id="thresholds" class="tab-content" style="display:none">
+            <div class="threshold-groups">
+                <label>Temp Min</label>
+                <input type="number" id="tempMin">
+
+                <label>Temp Max</label>
+                <input type="number" id="tempMax">
+
+                <label>Humidity Min</label>
+                <input type="number" id="humMin">
+
+                <label>Humidity Max</label>
+                <input type="number" id="humMax">
+                <div>
+                    <input type="checkbox" id="applyAll">Apply All
+                </div>
+            </div>
+            
+        </div>
+        <div id="names" class="tab-content" style="display:none">
+            {% for id, name in settings.SENSOR_NAMES.items() %}
+            <div>
+                <label for="name_{{ id }}">{{ name }}</label>
+                <input type="text" id="name_{{ id }}" value="{{ name }}">
+            </div>
+            {% endfor %}
+        </div>
+        
         <button id="saveSettingsBtn">Save</button>
     </div>
 </div>
@@ -120,7 +148,7 @@
 
 
 <script>
-document.addEventListener("DOMContentLoaded", () => {
+
     Chart.register(ChartZoom);
     let tempChart;
     let humChart;
@@ -134,11 +162,12 @@ document.addEventListener("DOMContentLoaded", () => {
     function closeSettings() {
         document.getElementById("settingsModal").style.display = "none";
     }
-    window.onclick = function(event) {
-        const modal = document.getElementById("settingsModal");
-        if (event.target == modal) {
-            modal.style.display = "none";
-        }
+    function openTab(tabName) {
+        document.querySelectorAll(".tab-content").forEach(tc => tc.style.display = "none");
+        document.getElementById(tabName).style.display = "block";
+
+        document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+        document.querySelector(`.tab-btn[onclick="openTab('${tabName}')"]`).classList.add("active");
     }
     /* --------------------
     LIVE TOP READINGS
@@ -161,26 +190,25 @@ document.addEventListener("DOMContentLoaded", () => {
                 hour12: true
             });
             document.getElementById("liveTime").textContent = formatted;
+            const alarmBox = document.getElementById("alarmBox");
+            if(data.alarms?.length > 0) {
+                alarmBox.style.display = "block";
+                alarmBox.style.backgroundColor = "#ff4d4d";
+                alarmBox.style.color = "white";
+                alarmBox.innerHTML = "🚨 CRITICAL: " + data.alarms.join("<br>");
+            }
+            else if(data.warnings?.length > 0) {
+                alarmBox.style.display = "block";
+                alarmBox.style.backgroundColor = "#ffd24d";
+                alarmBox.style.color = "black";
+                alarmBox.innerHTML = "⚠️ Warning: " + data.warnings.join("<br>");
+            }
+            else {
+                alarmBox.style.display = "none";
+            }
         } catch (e) {
             console.error("Live readings error", e);
         }
-        const alarmBox = document.getElementById("alarmBox");
-
-    if (data.alarms.length > 0) {
-        alarmBox.style.display = "block";
-        alarmBox.style.backgroundColor = "#ff4d4d";
-        alarmBox.style.color = "white";
-        alarmBox.innerHTML = "🚨 CRITICAL: " + data.alarms.join("<br>");
-    }
-    else if (data.warnings.length > 0) {
-        alarmBox.style.display = "block";
-        alarmBox.style.backgroundColor = "#ffd24d";
-        alarmBox.style.color = "black";
-        alarmBox.innerHTML = "⚠️ Warning: " + data.warnings.join("<br>");
-    }
-    else {
-        alarmBox.style.display = "none";
-    }
     }
 
     async function loadThresholds() {
@@ -471,48 +499,95 @@ document.addEventListener("DOMContentLoaded", () => {
         tempChart.update();
         humChart.update();
     }
+    const safeFloat = (id, defaultValue) => {
+        const el = document.getElementById(id);
+        const val = parseFloat(el?.value);
+        return isNaN(val) ? defaultValue : val;
+    }
     /* --------------------
     EVENT HANDLERS
     -------------------- */
-    document.getElementById("filterForm").addEventListener("submit", e => {
-        e.preventDefault();
-        loadFilteredData();
-    });
-    document.getElementById("liveBtn").addEventListener("click", goLiveMode);
+    const filterForm = document.getElementById("filterForm");
+    if(filterForm) {
+        filterForm.addEventListener("submit", (e) => {
+            e.preventDefault();
+            loadFilteredData();
+        });
+    } 
+    const liveBtn = document.getElementById("liveBtn");
+    if(liveBtn) {
+        liveBtn.addEventListener("click", goLiveMode);
+    }
 
-    document.getElementById("resetZoomBtn").addEventListener("click", () => {
-        tempChart.resetZoom();
-        humChart.resetZoom();
-    })
-
+    const resetZoomBtn = document.getElementById("resetZoomBtn");
+    if(resetZoomBtn) {
+        resetZoomBtn.addEventListener("click", () => {
+            tempChart.resetZoom();
+            humChart.resetZoom();
+        });
+    }
+    
+    window.addEventListener("DOMContentLoaded", loadSettings);
     window.addEventListener("resize", () => {
         tempChart.resize();
         humChart.resize();
     });
 
-    document.getElementById("saveThresholds").addEventListener("click", async () => {
-        const payload = {
+    document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
+        const thresholds = {
             sensor: currentSensor,
             temp_min: parseFloat(document.getElementById("tempMin").value),
             temp_max: parseFloat(document.getElementById("tempMax").value),
             hum_min: parseFloat(document.getElementById("humMin").value),
             hum_max: parseFloat(document.getElementById("humMax").value)
         }
-        const res = await fetch("/api/set_thresholds", {
+        const applyAll = document.getElementById("applyAll").checked;
+        
+        let sensorLimits = {};
+        
+        if(applyAll) {
+            Object.keys(APP_SETTINGS.SENSOR_NAMES).forEach(sensor => {
+                sensorLimits[sensor] = {
+                    temp_min: thresholds.temp_min,
+                    temp_max: thresholds.temp_max,
+                    hum_min: thresholds.hum_min,
+                    hum_max: thresholds.hum_max
+                };
+            });
+        }else{
+            sensorLimits[currentSensor] = thresholds;
+        }
+
+        const payload = {
+            warning_buffer: safeFloat("warningBuffer", 2.0),
+            reading_interval: safeFloat("readingInterval", 4.0),
+            sensor_name: {
+                "SEN0438:1": document.getElementById("name_SEN0438:1").value,
+                "SEN0438:2": document.getElementById("name_SEN0438:2").value,
+                "SEN0438:3": document.getElementById("name_SEN0438:3").value,
+                "SEN0438:4": document.getElementById("name_SEN0438:4").value,
+                "SEN0438:avg": document.getElementById("name_SEN0438:avg").value
+            },
+            sensor_limits: sensorLimits
+        };
+        const res = await fetch("/api/update_settings", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify(payload)
         });
-        const result = await res.json();
-        if (result.status === "success") {
-            alert("Settings Saved");
-        }else {
-            alert("Error In Saving Settings");
+        if (res.ok) {
+            alert("Settings saved successfully!");
+        } else {
+            alert("Error saving settings.");
         }
     });
-
+    let APP_SETTINGS = {};
+    async function loadSettings() {
+        const res = await fetch("/api/settings");
+        APP_SETTINGS = await res.json();
+    }
 
     /* --------------------
     START EVERYTHING
@@ -524,21 +599,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
     setInterval(updateLiveReadings, 3000); // always live
     setInterval(updateLiveGraph, 3000);    // only if liveMode
-});
 </script>
 {% endblock %}
-data = request.json()
-    settings = load_settings()
-
-    settings["WARNING_BUFFER"] = float(data["warning_buffer"])
-    settings["SENSOR-READING-INTERVAL"] = float(data["reading_interval"])
-
-    settings["SENSOR_NAMES"] = data["sensor_names"]
-
-    if "SENSOR-LIMITS" not in settings:
-        settings["SENSOR-LIMITS"] = {}
-    
-    for sensor, limits in data["sensor_limits"].items():
-        settings["SENSOR-LIMITS"][sensor] = limits
-    save_settings(settings)
-    return jsonify({"status": "success"})
