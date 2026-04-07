@@ -1,415 +1,654 @@
-from flask import Flask, render_template, request, send_file
-from datetime import datetime
-from pathlib import Path
-import csv
-import io
-import json
-import os
+{% extends "layout.html" %}
 
-from dotenv import load_dotenv
+{% block content %}
+<div class="header-bar">
 
-import mysql.connector
-from mysql.connector import Error
-from dotenv import load_dotenv
-from flask import jsonify, request
-
-import smtplib
-from email.mime.text import MIMEText
-import os
-
-load_dotenv()
-
-EMAIL_HOST = os.environ.get("EMAIL_HOST")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
-EMAIL_USER = os.environ.get("EMAIL_USER")
-EMAIL_PASS = os.environ.get("EMAIL_PASS")
-ALERT_TO = os.environ.get("ALERT_TO")
-
-WARNING_BUFFER = 2.0  # early warning range
-
-SENSOR_LIMITS = {
-    "SEN0438:1": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
-    "SEN0438:2": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
-    "SEN0438:3": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
-    "SEN0438:4": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
-    "SEN0438:avg": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
-}
-
-
-def send_email_alert(sensor, alarms, temp, hum, timestamp):
-    subject = f"🚨 Sensor Alarm: {sensor}"
-    body = f"""Sensor: {sensor}
-    Time: {timestamp}
-    Temperature: {temp:.1f} F
-    Humidity: {hum:.1f} %
-Alarms: {', '.join(alarms)}
-"""
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = EMAIL_USER
-    msg['To'] = ALERT_TO
-
-    try:
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.connect(EMAIL_HOST, EMAIL_PORT)
-        server.ehlo()
-        server.starttls()
-        server.ehlo()
-        server.login(EMAIL_USER, EMAIL_PASS)
-        server.send_message(msg)
-        server.quit()
-        print(f"Email sent: {sensor} {alarms}")
-    except Exception as e:
-        print("Failed to send email:", e)
+    <div class="header-left">
+        <img src="{{ url_for('static', filename='images/CDME-Stacked-RGBHEX.png') }}"
+             alt="CDME Logo"
+             class="logo">
+        
+        
+    </div>
+    <div class="dashboard-title">
+            <h1>Metal Additives Lab <br> Temperature & Humidity Dashboard</h1>
+    </div>
+    <nav class="nav-menu">
+        <ul>
+            <li class="dropdown">
+               
+                <a href="#" id="sensorDropdownLabel">Sensors ▾</a>
+                <ul class="dropdown-menu" id="sensorDropdown">   
+                </ul>
+                
+            </li>
+        </ul>
+        <div id="settingsGear" onclick="openSettings()">
+            ⚙️
+        </div>
+    </nav> 
+</div>
 
 
 
-app = Flask(__name__)
-TIME_FORMAT = "%m/%d/%Y %H:%M"
+<hr>
 
-"""CSV_PATH = Path("Data.csv")
-
-def load_csv():
-    rows=[]
-    if not CSV_PATH.exists():
-        return rows
+<!-- CURRENT VALUES (from Flask) -->
+<div class="metric-container">
+    <div class="top-row">
+        <div class="metric">
+        Current Lab Temperature:
+        <span id="liveTemp">{{ latest.Temperature }}</span> °F
+    </div>
+    <div class="metric">
+        Current Lab Humidity:
+        <span id="liveHum">{{ latest.Humidity }}</span> %
+    </div>
+    <form action="/download?sensor={{ sensor }}&start={{ request.args.get('start','') }}&end={{ request.args.get('end','') }}" method="get" style="display: inline;">
+        <button type="submit">Download CSV</button>
+    </form>
+    </div>
     
-    with CSV_PATH.open("r") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                timestamp = datetime.fromisoformat(row["Time"])
-                temp = float(row["Temperature"])
-                hum = float(row["Humidity"])
-                rows.append({
-                    "Time": timestamp,
-                    "Temperature": temp,
-                    "Humidity": hum
-                })
-            except:
-                continue
-    return rows"""
-load_dotenv()
+    <div class="lastUpdated">
+        Last Updated: 
+        <span id="liveTime">{{ latest.Time.strftime("%I:%M %p") }}</span>
+     </div>
+     <div class="last-backup" id="lastBackup">
+        Last Backup: 
+     </div>
+</div>
 
-DB_HOST = os.environ.get("MYSQL_HOST", "localhost")
-DB_PORT = int(os.environ.get("MYSQL_PORT", 3306))
-DB_USER = os.environ.get("MYSQL_USER", "env_user")
-DB_PASS = os.environ.get("MYSQL_PASS", "env_pass")
-DB_NAME = os.environ.get("MYSQL_DB", "envmon")
-DEVICE_ID = os.environ.get("DEVICE_ID")  # optional filter by device/sensor
+<hr>
 
-def check_sensor_alarm(sensor, temp, hum):
-    limits = SENSOR_LIMITS.get(sensor, SENSOR_LIMITS["SEN0438:avg"])
-
-    alarms = []
-    warnings = []
-
-    # Temperature
-    if temp >= limits["temp_max"]:
-        alarms.append("TEMP HIGH")
-    elif temp <= limits["temp_min"]:
-        alarms.append("TEMP LOW")
-    elif temp >= limits["temp_max"] - WARNING_BUFFER:
-        warnings.append("Temp approaching HIGH")
-    elif temp <= limits["temp_min"] + WARNING_BUFFER:
-        warnings.append("Temp approaching LOW")
-
-    # Humidity
-    if hum >= limits["hum_max"]:
-        alarms.append("HUM HIGH")
-    elif hum <= limits["hum_min"]:
-        alarms.append("HUM LOW")
-    elif hum >= limits["hum_max"] - WARNING_BUFFER:
-        warnings.append("Humidity approaching HIGH")
-    elif hum <= limits["hum_min"] + WARNING_BUFFER:
-        warnings.append("Humidity approaching LOW")
-
-    return alarms, warnings
-
-
-def get_conn():
-    """Create and return a new MySQL connection."""
-    return mysql.connector.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASS,
-        database=DB_NAME,
-    )
-
-def load_data_from_db(sensor_id, start_dt=None, end_dt=None):
-    """
-    Query readings from the database between start_dt and end_dt.
-
-    Returns a list of dicts with keys: Time (datetime), Temperature, Humidity.
-    """
+<!--<h3>Visual Trend</h3> -->
+<div class="charts-row">
+    <div class="chart-container">
+        <canvas id="tempChart"></canvas>
+    </div>
     
-    rows = []
-    try:
-        conn = get_conn()
-        cur = conn.cursor(dictionary=True)
+    <div class="chart-container">
+        <canvas id="humChart"></canvas>
+    </div>
+</div>
 
-        # Base query
-        query = """
-        SELECT ts, temperature_c, humidity_pct
-        FROM readings
-        WHERE sensor_id = %s
-        """
+<hr>
+<div class="dateRange">
+    <h3>Select Date Range</h3>
+    <form id="filterForm">
+            Start:
+        <input type="datetime-local" id="start">
+            End:
+        <input type="datetime-local" id="end">
+        <button type="submit">Apply Filter</button>
+        <button type="button" id="liveBtn">Clear Filter</button>
+        <button type="button" id="resetZoomBtn">
+            Reset Zoom
+        </button>
+    </form>
+</div>
+<div class="logBox">
+    <h3>System Alerts</h3>
+    <div class="logContent" id="logContent">
+        No Alerts.
+    </div>
+</div>
+<div id="settingsModal" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeSettings()">&times;</span>
+        <h2>Settings</h2>
+        <div class="tab-buttons">
+            <button class="tab-btn active" onclick="openTab('general')">General</button>
+            <button class="tab-btn" onclick="openTab('thresholds')">Alarm Thresholds</button>
+            <button class="tab-btn" onclick="openTab('names')">Sensor Names</button>
+        </div>
+        <div id="general" class="tab-content">
+            <div class="general-groups">
+                <label>Warning Buffer</label>
+                <input type="number" id="warningBuffer" step="0.1">
 
-        params = [sensor_id]
+                <label>Sensor Reading Interval (seconds)</label>
+                <input type="number" id="readingInterval" step="1">
 
-        # Optional filter by device/sensor
-        if DEVICE_ID:
-            query += " AND device_id = %s"
-            params.append(DEVICE_ID)
+                <div>
+                    <input type="checkbox" id="emailAlerts">Enable Email Alerts
+                </div>
+            </div>
+        </div>
+        <div id="thresholds" class="tab-content" style="display:none">
+            <div class="threshold-groups">
+                <label>Temp Min</label>
+                <input type="number" id="tempMin">
 
-        # Optional time filters
-        if start_dt is not None:
-            query += " AND ts >= %s"
-            params.append(start_dt)
+                <label>Temp Max</label>
+                <input type="number" id="tempMax">
 
-        if end_dt is not None:
-            query += " AND ts <= %s"
-            params.append(end_dt)
+                <label>Humidity Min</label>
+                <input type="number" id="humMin">
 
-        query += " ORDER BY ts"
+                <label>Humidity Max</label>
+                <input type="number" id="humMax">
+                <div>
+                    <input type="checkbox" id="applyAll">Apply All
+                </div>
+            </div>
+            
+        </div>
+        <div id="names" class="tab-content" style="display:none">
+            {% for id, name in settings.SENSOR_NAMES.items() %}
+            <div>
+                {% if id.startswith("SEN0438:") and id != "SEN0438:avg" %}
+                <label for = "name_{{ id }}">
+                    Sensor {{ id.split(":")[1]  }}
+                </label>
+                {% else %}
+                <label for="name_{{ id }}" id="label_{{ id }}">
+                    {{ name }}
+                </label>
+                {% endif %}
+                <input type="text" id="name_{{ id }}" value="{{ name}}">
+            </div>
+            {% endfor %}
+        </div>
+        
+        <button id="saveSettingsBtn">Save</button>
+    </div>
+</div>
 
-        cur.execute(query, params)
 
-        for row in cur:
-            # row['ts'] is a datetime object from MySQL
-            rows.append({
-                "Time": row["ts"],
-                "Temperature": float(row["temperature_c"]),
-                "Humidity": float(row["humidity_pct"]),
-            })
 
-        cur.close()
-        conn.close()
-    except Error as e:
-        print("DB error while loading data:", e)
+<script>
 
-    return rows
+    Chart.register(ChartZoom);
+    let tempChart;
+    let humChart;
+    let currentSensor = "{{ sensor }}";
+    let liveMode = true;
+    const MAX_POINTS = 50;
+    function openSettings() {
+        document.getElementById("settingsModal").style.display = "block";
+        loadThresholds();
+    }
+    function closeSettings() {
+        document.getElementById("settingsModal").style.display = "none";
+    }
+    function openTab(tabName) {
+        document.querySelectorAll(".tab-content").forEach(tc => tc.style.display = "none");
+        document.getElementById(tabName).style.display = "block";
 
-@app.route("/", methods=["GET"])
-def home():
-    if request.args.get("sensor") == "SEN0438:1":
-        sensor = "SEN0438:1"
-    elif request.args.get("sensor") == "SEN0438:2":
-        sensor = "SEN0438:2"
-    elif request.args.get("sensor") == "SEN0438:3":
-        sensor = "SEN0438:3"
-    elif request.args.get("sensor") == "SEN0438:4":
-        sensor = "SEN0438:4"
-    else:
-        sensor = request.args.get("sensor", "SEN0438:avg")
-    data = load_data_from_db(sensor)
-    if not data:
-        return "Database is empty or not accessible."
-    
-    data.sort(key=lambda r: r["Time"])
+        document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+        document.querySelector(`.tab-btn[onclick="openTab('${tabName}')"]`).classList.add("active");
+    }
+    /* --------------------
+    LIVE TOP READINGS
+    -------------------- */
+    function updateSensorDropdown() {
+        const menu = document.getElementById("sensorDropdown");
+        if(!menu) return;
+        menu.innerHTML = "";
+        Object.entries(APP_SETTINGS.SENSOR_NAMES).forEach(([id, name]) => {
+            const li = document.createElement("li");
+            const a = document.createElement("a");
+            a.href = `/?sensor=${id}`;
+            a.textContent = name;
+            li.appendChild(a);
+            menu.appendChild(li);
+        });
+    }
+    function updateSensorLabel() {
+        const el = document.getElementById("sensorDropdownLabel");
+        if(!el) return;
+        const name = APP_SETTINGS.SENSOR_NAMES[currentSensor] || currentSensor;
+        el.textContent = name + " ▾";
+    }
+    async function updateLiveReadings() {
+        try {
+            const res = await fetch("/api/live?sensor=" + currentSensor);
+            const data = await res.json();
+            if (!data.Time) return;
 
-    latest = data[-1]
-
-    start_date = request.args.get("start")
-    end_date = request.args.get("end")
-
-    if start_date and end_date:
-        start_dt = datetime.fromisoformat(start_date)
-        end_dt = datetime.fromisoformat(end_date)
-        filtered = [
-            r for r in data if start_dt <= r["Time"] <= end_dt
-        ]
-    else:
-        filtered = data
-
-    labels = json.dumps([r["Time"].isoformat() for r in filtered])
-    tempData = json.dumps([r["Temperature"] for r in filtered])
-    humData = json.dumps([r["Humidity"] for r in filtered])
-    return render_template(
-        "index.html",
-        latest=latest,
-        filtered=filtered,
-        rows= data,
-        labels=labels,
-        tempData=tempData,
-        humData=humData,
-        sensor=sensor,
-        has_filter=bool(start_date and end_date)
-    )
-
-@app.route("/download")
-def download():
-    data = load_data_from_db(request.args.get("sensor", "SEN0438:avg"))
-
-    start = request.args.get("start")
-    end = request.args.get("end")
-
-    if start and end:
-        start_dt = datetime.fromisoformat(start)
-        end_dt = datetime.fromisoformat(end)
-        data = [r for r in data if start_dt <= r["Time"] <= end_dt]
-
-    output=io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Time", "Temperature", "humidity"])
-
-    for r in data:
-        writer.writerow([r["Time"].isoformat(), r["Temperature"], r["Humidity"]])
-
-    output.seek(0)
-
-    return send_file(
-        io.BytesIO(output.getvalue().encode()),
-        mimetype="text/csv",
-        as_attachment=True,
-        download_name="FilteredData.csv"
-    )
-@app.route("/data")
-def data():
-    if request.args.get("sensor") == "SEN0438:1":
-        sensor = "SEN0438:1"
-    elif request.args.get("sensor") == "SEN0438:2":
-        sensor = "SEN0438:2"
-    elif request.args.get("sensor") == "SEN0438:3":
-        sensor = "SEN0438:3"
-    elif request.args.get("sensor") == "SEN0438:4":
-        sensor = "SEN0438:4"
-    else:
-        sensor = request.args.get("sensor", "SEN0438:avg")
-    start = request.args.get("start")
-    end = request.args.get("end")
-
-    start_dt = None
-    end_dt = None
-
-    # datetime-local → Python datetime
-    if start:
-        start_dt = datetime.fromisoformat(start)
-    if end:
-        end_dt = datetime.fromisoformat(end)
-
-    rows = load_data_from_db(sensor, start_dt, end_dt)
-
-    return jsonify([
-        {
-            "Time": r["Time"].isoformat(),  # IMPORTANT
-            "Temperature": r["Temperature"],
-            "Humidity": r["Humidity"]
+            document.getElementById("liveTemp").textContent =
+                data.Temperature.toFixed(1);
+            document.getElementById("liveHum").textContent =
+                data.Humidity.toFixed(1);
+            const dt= new Date(data.Time);
+            const formatted = dt.toLocaleString("en-US", {
+                
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: true
+            });
+            document.getElementById("liveTime").textContent = formatted;
+        } catch (e) {
+            console.error("Live readings error", e);
         }
-        for r in rows
-    ])
-
-@app.route("/api/live")
-def api_live():
-    if request.args.get("sensor") == "SEN0438:1":
-        sensor = "SEN0438:1"
-    elif request.args.get("sensor") == "SEN0438:2":
-        sensor = "SEN0438:2"
-    elif request.args.get("sensor") == "SEN0438:3":
-        sensor = "SEN0438:3"
-    elif request.args.get("sensor") == "SEN0438:4":
-        sensor = "SEN0438:4"
-    else:
-        sensor = request.args.get("sensor", "SEN0438:avg")
-    rows = load_data_from_db(sensor)
-    rows_sen1 = load_data_from_db("SEN0438:1")
-    rows_sen2 = load_data_from_db("SEN0438:2")
-    rows_sen3 = load_data_from_db("SEN0438:3")
-    rows_sen4 = load_data_from_db("SEN0438:4")
-
-    if not rows:
-        return jsonify({})
-
-    latest = rows[-1]
-
-    latest_sen1 = rows_sen1[-1] if rows_sen1 else None
-    latest_sen2 = rows_sen2[-1] if rows_sen2 else None
-    latest_sen3 = rows_sen3[-1] if rows_sen3 else None
-    latest_sen4 = rows_sen4[-1] if rows_sen4 else None
-    
-    alarms, warnings = check_sensor_alarm(
-    "SEN0438:1",
-    latest_sen1["Temperature"],
-    latest_sen1["Humidity"])
-    print("Alarms:", alarms, "Warnings:", warnings, "for sensor SEN0438:1")
-    ##send_email_alert("SEN0438:1", alarms, latest["Temperature"], latest["Humidity"], latest["Time"])
-    alarms, warnings = check_sensor_alarm(
-    "SEN0438:2",
-    latest_sen2["Temperature"],
-    latest_sen2["Humidity"])
-    print("Alarms:", alarms, "Warnings:", warnings, "for sensor SEN0438:2" )
-    ##send_email_alert("SEN0438:2", alarms, latest["Temperature"], latest["Humidity"], latest["Time"])
-    alarms, warnings = check_sensor_alarm(
-    "SEN0438:3",
-    latest_sen3["Temperature"],
-    latest_sen3["Humidity"])
-    print("Alarms:", alarms, "Warnings:", warnings, "for sensor SEN0438:3")
-    ##send_email_alert("SEN0438:3", alarms, latest["Temperature"], latest["Humidity"], latest["Time"])
-    alarms, warnings = check_sensor_alarm(
-    "SEN0438:4",
-    latest_sen4["Temperature"],
-    latest_sen4["Humidity"])
-    print("Alarms:", alarms, "Warnings:", warnings, "for sensor SEN0438:4")
-    ##send_email_alert("SEN0438:4", alarms, latest["Temperature"], latest["Humidity"], latest["Time"])
-
-
-    alarms, warnings = check_sensor_alarm(sensor, latest["Temperature"], latest["Humidity"])
-
-    return jsonify({
-        "Time": latest["Time"].isoformat(),
-        "Temperature": latest["Temperature"],
-        "Humidity": latest["Humidity"],
-        "alarms": alarms,
-        "warnings": warnings
-    })
-
-@app.route("/api/get_thresholds")
-def get_thresholds_api():
-    sensor = request.args.get("sensor", "SEN0438:avg")
-    return jsonify(SENSOR_LIMITS.get(sensor, SENSOR_LIMITS["SEN0438:avg"]))
-
-@app.route("/api/set_thresholds", methods=["POST"])
-def set_thresholds():
-    data = request.json
-    sensor = data["sensor"]
-
-    SENSOR_LIMITS[sensor] = {
-        "temp_min": data["temp_min"],
-        "temp_max": data["temp_max"],
-        "hum_min": data["hum_min"],
-        "hum_max": data["hum_max"]
     }
 
-    return jsonify({"status": "success"})
+    async function loadThresholds() {
+        const params = new URLSearchParams(window.location.search);
+        const sensor = params.get("sensor") || "SEN0438:avg";
 
-@app.route("/api/recent")
-def api_recent():
+        const res = await fetch(`/api/get_thresholds?sensor=${sensor}`);
+        const data = await res.json();
 
-
-    if request.args.get("sensor") == "SEN0438:1":
-        sensor = "SEN0438:1"
-    elif request.args.get("sensor") == "SEN0438:2":
-        sensor = "SEN0438:2"
-    elif request.args.get("sensor") == "SEN0438:3":
-        sensor = "SEN0438:3"
-    elif request.args.get("sensor") == "SEN0438:4":
-        sensor = "SEN0438:4"
-    else:
-        sensor = request.args.get("sensor", "SEN0438:avg")
-    
-    limit = int(request.args.get("limit", 50))
-
-    rows = load_data_from_db(sensor)
-    rows = rows[-limit:]
-
-    return jsonify([
-        {
-            "Time": r["Time"].isoformat(),
-            "Temperature": r["Temperature"],
-            "Humidity": r["Humidity"]
+        document.getElementById("tempMin").value = data.temp_min;
+        document.getElementById("tempMax").value = data.temp_max;
+        document.getElementById("humMin").value = data.hum_min;
+        document.getElementById("humMax").value = data.hum_max;
+    }
+    async function updateBackupTime() {
+        const res = await fetch("/api/last_backup");
+        const data = await res.json();
+        if(data.last_backup) {
+            const dt = new Date(data.last_backup);
+            document.getElementById("lastBackup").textContent = "Last Backup: " + dt.toLocaleString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: true
+            });
+        }else{
+            document.getElementById("lastBackup").textContent = "Last Backup: Never";
         }
-        for r in rows
-    ])
+    }
+    let lastLogs = "";
+    async function updateLogs() {
+        const res = await fetch("/api/logs");
+        const logs = await res.json();
 
-if __name__ == "__main__":app.run(host="0.0.0.0", port=5000)
+        const newLogs = logs.join("\n");
+        if(newLogs === lastLogs) {
+            return;
+        }
+        lastLogs = newLogs;
+        const container = document.getElementById("logContent");
+
+        container.innerHTML = logs.map(line => {
+            if(line.includes("ERROR")) {
+                return `<div>${line}</div>`;
+            }
+        })
+        .join("\n");
+        container.scrollTop = container.scrollHeight;
+    }
+    /* --------------------
+    INITIAL LIVE GRAPH
+    -------------------- */
+    async function loadLiveGraph() {
+        const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
+        const data = await res.json();
+        if (!data.length) return;
+
+        const tempCtx = document.getElementById("tempChart");
+        const humCtx = document.getElementById("humChart");
+
+        tempChart = new Chart(tempCtx, {
+            type: "line",
+            data: {
+                
+                datasets: [
+                    {
+                        
+                        data: data.map(d => ({x: d.Time, y: d.Temperature})),
+                        borderColor: "red",
+                        tension: 0.2
+                    },
+                ]
+            },
+            options: {
+                animation: false,
+                normalized: true,
+                responsive: true,
+                maintainedAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: "nearest"
+                },
+                plugins: {
+                    legend: {
+                        display: false 
+                    },
+                    zoom: {
+                        pan: {
+                            enabled: true,
+                            mode: "xy",
+                            threshold: 2
+                        },
+                        zoom: {
+                            wheel: {
+                                enabled: true
+                            },
+                            pinch: {
+                                enabled: true
+                            },
+                            
+                            mode: "x"
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: "time",
+                    
+                        time:{
+                            displayFormats: {
+            minute: "MMM d h:mm a",
+            hour: "MMM d h:mm a",
+            day: "MMM d",
+            week: "MMM d",
+            month: "MMM yyyy",
+            year: "yyyy"
+        },
+        tooltipFormat: "MMM d yyyy h:mm a"
+                        },
+                        ticks: {
+                            maxRotation: 0,
+                            autoSkip: true,
+                            maxTicksLimit: 6
+                        }
+                    },
+                    y: {
+                        min: 50,
+                        max: 120,
+                        ticks: {
+                            stepSize: 10
+                        },
+                        title: {
+                            display: true,
+                            text: "Temperature (°F)"
+                        }
+                    }
+                }
+            }
+        });
+        humChart = new Chart(humCtx, {
+            type: "line",
+            data: {
+                
+                datasets: [
+                    {
+                    
+                        data: data.map(d => ({x: d.Time, y: d.Humidity})),
+                        borderColor: "blue",
+                        tension: 0.2
+                    },
+                ]
+            },
+            options: {
+                animation: false,
+                normalized: true,
+                responsive: true,
+                maintainedAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: "nearest"
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    zoom: {
+                        pan: {
+                            enabled: true,
+                            mode: "xy",
+                            threshold: 2
+                        },
+                        zoom: {
+                            wheel: {
+                                enabled: true
+                            },
+                            pinch: {
+                                enabled: true
+                            },
+                            
+                            mode: "x"
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: "time",
+                        
+                        time:{
+                            displayFormats: {
+            minute: "MMM d h:mm a",
+            hour: "MMM d h:mm a",
+            day: "MMM d",
+            week: "MMM d",
+            month: "MMM yyyy",
+            year: "yyyy"
+        },
+        
+        tooltipFormat: "MMM d yyyy h:mm a"
+                        },
+                        ticks: {
+                            maxRotation: 0,
+                            autoSkip: true,
+                            maxTicksLimit: 6
+                        }
+                    },
+                    y: {
+                        min: 0,
+                        max: 100,
+                        ticks: {
+                            stepSize: 10
+                        },
+                        title: {
+                            display: true,
+                            text: "Humidity (%)"
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /* --------------------
+    LIVE GRAPH UPDATES
+    -------------------- */
+    async function updateLiveGraph() {
+        if (!liveMode || (!tempChart || !humChart)) return;
+
+        const res = await fetch("/api/live?sensor=" + currentSensor);
+        const p = await res.json();
+        if (!p.Time) return;
+
+        if(tempChart.data.datasets[0].data.at(-1)?.x===p.Time) return;
+        tempChart.data.datasets[0].data.push({
+            x: p.Time,
+            y: p.Temperature
+        });
+
+        humChart.data.datasets[0].data.push({
+            x: p.Time,
+            y: p.Humidity
+        });
+
+
+        if (tempChart.data.datasets[0].data.length > MAX_POINTS) {
+            
+            tempChart.data.datasets[0].data.shift();
+            humChart.data.datasets[0].data.shift();
+        }
+
+        tempChart.update("none");
+        humChart.update("none");
+        
+    }
+
+    /* --------------------
+    FILTERED GRAPH
+    -------------------- */
+    async function loadFilteredData() {
+        liveMode = false;
+
+        const start = document.getElementById("start").value;
+        const end = document.getElementById("end").value;
+
+        const res = await fetch(`/data?sensor=${currentSensor}&start=${start}&end=${end}`);
+        const data = await res.json();
+        if (!data.length) return;
+
+        tempChart.data.datasets[0].data = data.map(d => ({
+            x: d.Time,
+            y: d.Temperature
+        }));
+
+        humChart.data.datasets[0].data = data.map(d => ({
+            x: d.Time,
+            y: d.Humidity
+        }));
+
+        tempChart.update();
+        humChart.update();
+    }
+
+    async function goLiveMode(){
+        liveMode = true
+
+        document.getElementById("start").value ="";
+        document.getElementById("end").value ="";
+
+        const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
+        const data = await res.json();
+        if(!data.length) return;
+
+        tempChart.data.datasets[0].data = data.map(d => ({
+            x: d.Time,
+            y: d.Temperature
+        }));
+
+        humChart.data.datasets[0].data = data.map(d => ({
+            x: d.Time,
+            y: d.Humidity
+        }));
+
+        tempChart.update();
+        humChart.update();
+    }
+    const safeFloat = (id, defaultValue) => {
+        const el = document.getElementById(id);
+        const val = parseFloat(el?.value);
+        return isNaN(val) ? defaultValue : val;
+    }
+    /* --------------------
+    EVENT HANDLERS
+    -------------------- */
+    const filterForm = document.getElementById("filterForm");
+    if(filterForm) {
+        filterForm.addEventListener("submit", (e) => {
+            e.preventDefault();
+            loadFilteredData();
+        });
+    } 
+    const liveBtn = document.getElementById("liveBtn");
+    if(liveBtn) {
+        liveBtn.addEventListener("click", goLiveMode);
+    }
+
+    const resetZoomBtn = document.getElementById("resetZoomBtn");
+    if(resetZoomBtn) {
+        resetZoomBtn.addEventListener("click", () => {
+            tempChart.resetZoom();
+            humChart.resetZoom();
+        });
+    }
+    
+    window.addEventListener("DOMContentLoaded", loadSettings);
+    window.addEventListener("resize", () => {
+        tempChart.resize();
+        humChart.resize();
+    });
+
+    document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
+        const thresholds = {
+            sensor: currentSensor,
+            temp_min: parseFloat(document.getElementById("tempMin").value),
+            temp_max: parseFloat(document.getElementById("tempMax").value),
+            hum_min: parseFloat(document.getElementById("humMin").value),
+            hum_max: parseFloat(document.getElementById("humMax").value)
+        }
+        const applyAll = document.getElementById("applyAll").checked;
+        
+        let sensorLimits = {};
+        
+        if(applyAll) {
+            Object.keys(APP_SETTINGS.SENSOR_NAMES).forEach(sensor => {
+                sensorLimits[sensor] = {
+                    temp_min: thresholds.temp_min,
+                    temp_max: thresholds.temp_max,
+                    hum_min: thresholds.hum_min,
+                    hum_max: thresholds.hum_max
+                };
+            });
+        }else{
+            sensorLimits[currentSensor] = thresholds;
+        }
+
+        const payload = {
+            warning_buffer: safeFloat("warningBuffer", 2.0),
+            reading_interval: safeFloat("readingInterval", 4.0),
+            email_alerts: document.getElementById("emailAlerts").checked,
+            sensor_name: {
+                "SEN0438:1": document.getElementById("name_SEN0438:1").value,
+                "SEN0438:2": document.getElementById("name_SEN0438:2").value,
+                "SEN0438:3": document.getElementById("name_SEN0438:3").value,
+                "SEN0438:4": document.getElementById("name_SEN0438:4").value,
+                "SEN0438:avg": document.getElementById("name_SEN0438:avg").value
+            },
+            sensor_limits: sensorLimits
+        };
+        const res = await fetch("/api/update_settings", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+            await loadSettings();
+            updateSensorLabel();
+            updateSensorDropdown();
+            alert("Settings saved successfully!");
+        } else {
+            alert("Error saving settings.");
+        }
+        closeSettings();
+    });
+    let APP_SETTINGS = {};
+    async function loadSettings() {
+        const res = await fetch("/api/settings");
+        APP_SETTINGS = await res.json();
+        document.getElementById("emailAlerts").checked = APP_SETTINGS.email_alerts;
+        document.getElementById("warningBuffer").value = APP_SETTINGS.warning_buffer;
+        document.getElementById("readingInterval").value = APP_SETTINGS.reading_interval;
+        const avgLabel = document.getElementById("label_SEN0438:avg");
+        if(avgLabel) {
+            avgLabel.textContent = APP_SETTINGS.SENSOR_NAMES["SEN0438:avg"] || "Average Room";
+        }
+        Object.entries(APP_SETTINGS.SENSOR_NAMES).forEach(([id, name]) => {
+            const input = document.getElementById("name_" + id);
+            if(input) {
+                input.value = name;
+            }
+        });
+        updateSensorLabel();
+        updateSensorDropdown();
+    }
+
+    /* --------------------
+    START EVERYTHING
+    -------------------- */
+    loadLiveGraph();
+    updateLiveReadings();
+    updateLiveGraph();
+    loadThresholds();
+    updateBackupTime();
+    updateLogs();
+    setInterval(updateLogs, 3000);
+    setInterval(updateBackupTime, 3000);
+    setInterval(updateLiveReadings, 3000); // always live
+    setInterval(updateLiveGraph, 3000);    // only if liveMode
+</script>
+{% endblock %}
