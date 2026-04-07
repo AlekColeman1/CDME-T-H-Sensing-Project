@@ -1,508 +1,235 @@
-{% extends "layout.html" %}
-
-{% block content %}
-<div class="header-bar">
-
-    <div class="header-left">
-        <img src="{{ url_for('static', filename='images/CDME-Stacked-RGBHEX.png') }}"
-             alt="CDME Logo"
-             class="logo">
+<!DOCTYPE html>
+<html>
+    <!-- BUX CSS -->
+    <link rel="stylesheet" href="https://assets.bux.osu.edu/v1.4.0/css/bux-styles.min.css"/>
+    <head>
         
-        
-    </div>
-    <div class="dashboard-title">
-            <h1>Metal Additives Lab <br> Temperature & Humidity Dashboard</h1>
-    </div>
-    <nav class="nav-menu">
-        <ul>
-            <li class="dropdown">
-               
-                <a href="#">Sensors ▾</a>
-                <ul class="dropdown-menu">
-                    {% for id, name in settings.SENSOR_NAMES.items() %}
-                    <li><a href="/?sensor={{ id }}">{{ name }}</a></li>
-                    
-                    
-                    {% endfor %}    
-                </ul>
-                
-            </li>
-        </ul>
-    </nav>
-    <div id="settingsGear" onclick="openSettings()">
-    ⚙️
-</div>
-</div>
-
-<div id="alarmBox" style="
-    display:none;
-    margin-top:15px;
-    padding:10px;
-    border-radius:5px;
-    text-align:center;
-    font-weight:bold;
-"></div>
-
-<hr>
-
-<!-- CURRENT VALUES (from Flask) -->
-<div class="metric-container">
-    <div class="top-row">
-        <div class="metric">
-        Current Lab Temperature:
-        <span id="liveTemp">{{ latest.Temperature }}</span> °F
-    </div>
-    <div class="metric">
-        Current Lab Humidity:
-        <span id="liveHum">{{ latest.Humidity }}</span> %
-    </div>
-    <form action="/download?sensor={{ sensor }}&start={{ request.args.get('start','') }}&end={{ request.args.get('end','') }}" method="get" style="display: inline;">
-        <button type="submit">Download CSV</button>
-    </form>
-    </div>
-    
-    <div class="lastUpdated">
-        Last Updated: 
-        <span id="liveTime">{{ latest.Time.strftime("%I:%M %p") }}</span>
-     </div>
-</div>
-
-<hr>
-
-<!--<h3>Visual Trend</h3> -->
-<div class="charts-row">
-    <div class="chart-container">
-        <canvas id="tempChart"></canvas>
-    </div>
-    
-    <div class="chart-container">
-        <canvas id="humChart"></canvas>
-    </div>
-</div>
-
-<hr>
-<div class="dateRange">
-    <h3>Select Date Range</h3>
-    <form id="filterForm">
-            Start:
-        <input type="datetime-local" id="start">
-            End:
-        <input type="datetime-local" id="end">
-        <button type="submit">Apply Filter</button>
-        <button type="button" id="liveBtn">Clear Filter</button>
-        <button type="button" id="resetZoomBtn">
-            Reset Zoom
-        </button>
-    </form>
-</div>
-
-<div class="threshold-box">
-    <h3>Alarm Settings</h3>
-
-    Temp Min: <input type="number" id="tempMin" value="{{ settings['SENSOR-LIMITS'][sensor]['temp_min'] }}"><br>
-    Temp Max: <input type="number" id="tempMax" value="{{ settings['SENSOR-LIMITS'][sensor]['temp_max'] }}"><br>
-    Humidity Min: <input type="number" id="humMin" value="{{ settings['SENSOR-LIMITS'][sensor]['hum_min'] }}"><br>
-    Humidity Max: <input type="number" id="humMax" value="{{ settings['SENSOR-LIMITS'][sensor]['hum_max'] }}"><br>
-
-    <button id="saveThresholds">Save Settings</button>
-</div>
-
-
-<script>
-Chart.register(ChartZoom);
-let tempChart;
-let humChart;
-let currentSensor = "{{ sensor }}";
-let liveMode = true;
-const MAX_POINTS = 50;
-
-/* --------------------
-   LIVE TOP READINGS
--------------------- */
-async function updateLiveReadings() {
-    try {
-        const res = await fetch("/api/live?sensor=" + currentSensor);
-        const data = await res.json();
-        if (!data.Time) return;
-
-        document.getElementById("liveTemp").textContent =
-            data.Temperature.toFixed(1);
-        document.getElementById("liveHum").textContent =
-            data.Humidity.toFixed(1);
-        const dt= new Date(data.Time);
-        const formatted = dt.toLocaleString("en-US", {
-            
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: true
-        });
-        document.getElementById("liveTime").textContent = formatted;
-    } catch (e) {
-        console.error("Live readings error", e);
-    }
-    const alarmBox = document.getElementById("alarmBox");
-
-if (data.alarms.length > 0) {
-    alarmBox.style.display = "block";
-    alarmBox.style.backgroundColor = "#ff4d4d";
-    alarmBox.style.color = "white";
-    alarmBox.innerHTML = "🚨 CRITICAL: " + data.alarms.join("<br>");
-}
-else if (data.warnings.length > 0) {
-    alarmBox.style.display = "block";
-    alarmBox.style.backgroundColor = "#ffd24d";
-    alarmBox.style.color = "black";
-    alarmBox.innerHTML = "⚠️ Warning: " + data.warnings.join("<br>");
-}
-else {
-    alarmBox.style.display = "none";
-}
-}
-
-async function loadThresholds() {
-    const params = new URLSearchParams(window.location.search);
-    const sensor = params.get("sensor") || "SEN0438:avg";
-
-    const res = await fetch(`/api/get_thresholds?sensor=${sensor}`);
-    const data = await res.json();
-
-    document.getElementById("tempMin").value = data.temp_min;
-    document.getElementById("tempMax").value = data.temp_max;
-    document.getElementById("humMin").value = data.hum_min;
-    document.getElementById("humMax").value = data.hum_max;
-}
-
-/* --------------------
-   INITIAL LIVE GRAPH
--------------------- */
-async function loadLiveGraph() {
-    const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
-    const data = await res.json();
-    if (!data.length) return;
-
-    const tempCtx = document.getElementById("tempChart");
-    const humCtx = document.getElementById("humChart");
-
-    tempChart = new Chart(tempCtx, {
-        type: "line",
-        data: {
-            
-            datasets: [
-                {
-                    
-                    data: data.map(d => ({x: d.Time, y: d.Temperature})),
-                    borderColor: "red",
-                    tension: 0.2
-                },
-            ]
-        },
-        options: {
-            animation: false,
-            normalized: true,
-            responsive: true,
-            maintainedAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: "nearest"
-            },
-            plugins: {
-                legend: {
-                    display: false 
-                },
-                /*title: {
-                    display: true,
-                    text: "Temperature",
-                    font: {
-                        size: 18,
-                        weight: "bold"
-                    }
-                },*/
-                decimation: {
-                    enabled: true,
-                    algorithm: "lttb",
-                    samples: 500,
-                    threshold: 1000
-                },
-                zoom: {
-                    pan: {
-                        enabled: true,
-                        mode: "xy",
-                        threshold: 2
-                    },
-                    zoom: {
-                        wheel: {
-                            enabled: true
-                        },
-                        pinch: {
-                            enabled: true
-                        },
-                        
-                        mode: "x"
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    type: "time",
-                
-                    time:{
-                        displayFormats: {
-        minute: "MMM d h:mm a",
-        hour: "MMM d h:mm a",
-        day: "MMM d",
-        week: "MMM d",
-        month: "MMM yyyy",
-        year: "yyyy"
-    },
-    tooltipFormat: "MMM d yyyy h:mm a"
-                    },
-                    ticks: {
-                        maxRotation: 0,
-                        autoSkip: true,
-                        maxTicksLimit: 6
-                    }
-                },
-                y: {
-                    min: 50,
-                    max: 120,
-                    ticks: {
-                        stepSize: 10
-                    },
-                    title: {
-                        display: true,
-                        text: "Temperature (°F)"
-                    }
-                }
+        <title>Dashboard</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+        <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+        <style>
+            body { font-family: Buckeye Serif; margin: 0; background: #f9f9f9 }
+            .metric {text-align: center; font-size: 28px;}
+            .metric-container {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
             }
-        }
-    });
-    humChart = new Chart(humCtx, {
-        type: "line",
-        data: {
-            
-            datasets: [
-                {
-                   
-                    data: data.map(d => ({x: d.Time, y: d.Humidity})),
-                    borderColor: "blue",
-                    tension: 0.2
-                },
-            ]
-        },
-        options: {
-            animation: false,
-            normalized: true,
-            responsive: true,
-            maintainedAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: "nearest"
-            },
-            plugins: {
-                legend: {
-                    display: false
-                },
-                decimation: {
-                    enabled: true,
-                    algorithm: "lttb",
-                    samples: 500,
-                    threshold: 1000
-                },
-                zoom: {
-                    pan: {
-                        enabled: true,
-                        mode: "xy",
-                        threshold: 2
-                    },
-                    zoom: {
-                        wheel: {
-                            enabled: true
-                        },
-                        pinch: {
-                            enabled: true
-                        },
-                        
-                        mode: "x"
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    type: "time",
-                    
-                    time:{
-                        displayFormats: {
-        minute: "MMM d h:mm a",
-        hour: "MMM d h:mm a",
-        day: "MMM d",
-        week: "MMM d",
-        month: "MMM yyyy",
-        year: "yyyy"
-    },
-    
-    tooltipFormat: "MMM d yyyy h:mm a"
-                    },
-                    ticks: {
-                        maxRotation: 0,
-                        autoSkip: true,
-                        maxTicksLimit: 6
-                    }
-                },
-                y: {
-                    min: 0,
-                    max: 100,
-                    ticks: {
-                        stepSize: 10
-                    },
-                    title: {
-                        display: true,
-                        text: "Humidity (%)"
-                    }
-                }
+            .container { max-width: 95%; margin: auto}
+            .top-row {
+                display: flex;
+                gap: 50px;
+                justify-content: center;
+                align-items: center;
             }
-        }
-    });
+            .dateRange {
+                text-align: center;
+                margin-top: 20px;
+                padding-top: 50px;
+            }
+            .dateRange input, button, a {
+                margin: 5px;
+            }
+            .lastUpdated {
+                margin-top: 8px;
+                font-size: 10px;
+                color: #555;
+                align-self: flex-end;
+                margin-right: 445px;
+            }
+            .last-backup {
+                margin-top: 8px;
+                font-size: 10px;
+                color: #555;
+                align-self: flex-end;
+                margin-right: 445px;
+            }
+            .logBox {
+                margin-top: 20px;
+                padding: 12px;
+                border-radius: 8px;
+                background-color: #f8f9fa;
+                border: 1px solid #ddd;
+            }
+            .logContent {
+                max-height: 200px;
+                overflow-y: auto;
+                font-size: 14px;
+                background: #ffffffff;
+                padding: 10px;
+                border-radius: 5px;
+                border: 1px solid #ccc;
+            }
+            .charts-row { display: flex; flex-wrap: wrap; gap: 30px; justify-content: center; }
+            .chart-container { flex: 1; min-width: 30%; max-width: 45%; height: 100%; padding-top: 50px;}
+            .header-bar {
+    display: grid;
+    grid-template-columns: auto 1fr auto; /* logo | center title | nav */
+    align-items: center;
+    padding: 10px 20px;
+    column-gap: 20px; /* space between items */
 }
 
-/* --------------------
-   LIVE GRAPH UPDATES
--------------------- */
-async function updateLiveGraph() {
-    if (!liveMode || (!tempChart || !humChart)) return;
+.header-left {
+    display: flex;
+    align-items: center;
+}
 
-    const res = await fetch("/api/live?sensor=" + currentSensor);
-    const p = await res.json();
-    if (!p.Time) return;
+.logo {
+    height: 175px;
+    width: auto;
+}
 
-    if(tempChart.data.datasets[0].data.at(-1)?.x===p.Time) return;
-    tempChart.data.datasets[0].data.push({
-        x: p.Time,
-        y: p.Temperature
-    });
+.dashboard-title {
+    justify-self: center; /* center the title in its column */
+    text-align: center;
+}
 
-    humChart.data.datasets[0].data.push({
-        x: p.Time,
-        y: p.Humidity
-    });
+.dashboard-title h1 {
+    margin: 0;
+    /*padding-top: 100px;*/
+    padding-right: 115px;
+    font-size: 40px;
+    font-weight: normal;
+}
 
-
-    if (tempChart.data.datasets[0].data.length > MAX_POINTS) {
-        
-        tempChart.data.datasets[0].data.shift();
-        humChart.data.datasets[0].data.shift();
-    }
-
-    tempChart.update("none");
-    humChart.update("none");
+.nav-menu {
+    justify-self: end; /* menu aligned right */
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+#settingsGear {
+    font-size: 24px;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+}
+#settingsGear:hover {
+    background: #eee;
+}
+/* Dropdown styles remain the same */
+.nav-menu ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     
 }
 
-/* --------------------
-   FILTERED GRAPH
--------------------- */
-async function loadFilteredData() {
-    liveMode = false;
-
-    const start = document.getElementById("start").value;
-    const end = document.getElementById("end").value;
-
-    const res = await fetch(`/data?sensor=${currentSensor}&start=${start}&end=${end}`);
-    const data = await res.json();
-    if (!data.length) return;
-
-    tempChart.data.datasets[0].data = data.map(d => ({
-        x: d.Time,
-        y: d.Temperature
-    }));
-
-    humChart.data.datasets[0].data = data.map(d => ({
-        x: d.Time,
-        y: d.Humidity
-    }));
-
-    tempChart.update();
-    humChart.update();
+.nav-menu > ul > li {
+    position: relative;
+    padding-right: 100px;
+    
 }
 
-async function goLiveMode(){
-    liveMode = true
-
-    document.getElementById("start").value ="";
-    document.getElementById("end").value ="";
-
-    const res = await fetch("/api/recent?sensor=" + currentSensor + "&limit=" + MAX_POINTS);
-    const data = await res.json();
-    if(!data.length) return;
-
-    tempChart.data.datasets[0].data = data.map(d => ({
-        x: d.Time,
-        y: d.Temperature
-    }));
-
-    humChart.data.datasets[0].data = data.map(d => ({
-        x: d.Time,
-        y: d.Humidity
-    }));
-
-    tempChart.update();
-    humChart.update();
+.nav-menu a {
+    text-decoration: none;   /* removes underline */
+    color: black;            /* normal text color */
+    font-weight: 600;     /* normal weight, not bold */
+    cursor: default;
+    font-size: 22px;
+    padding: 10px 16px;
+    display: inline-block;
+    cursor: pointer;
 }
-/* --------------------
-   EVENT HANDLERS
--------------------- */
-document.getElementById("filterForm").addEventListener("submit", e => {
-    e.preventDefault();
-    loadFilteredData();
-});
-document.getElementById("liveBtn").addEventListener("click", goLiveMode);
 
-document.getElementById("resetZoomBtn").addEventListener("click", () => {
-    tempChart.resetZoom();
-    humChart.resetZoom();
-})
+.nav-menu a:hover {
+    background: #eee;        /* optional hover effect */
+    color: black;            /* keep text color same */
+    border-radius: 5px;
+    cursor: pointer;
+    
+}
 
-window.addEventListener("resize", () => {
-    tempChart.resize();
-    humChart.resize();
-});
+.dropdown-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: 100%;
+    background: white;
+    min-width: 250px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.15);
+    border-radius: 6px;
+    padding: 5px 0;
+    z-index: 10;
+    
+}
 
-document.getElementById("saveThresholds").addEventListener("click", async () => {
-    const params = new URLSearchParams(window.location.search);
-    const sensor = params.get("sensor") || "SEN0438:avg";
+.dropdown-menu li a {
+    padding: 14px 20px;
+    font-size: 20px;
+    font-weight: normal;
+    
+}
 
-    const payload = {
-        sensor: sensor,
-        temp_min: parseFloat(document.getElementById("tempMin").value),
-        temp_max: parseFloat(document.getElementById("tempMax").value),
-        hum_min: parseFloat(document.getElementById("humMin").value),
-        hum_max: parseFloat(document.getElementById("humMax").value)
-    };
-
-    await fetch("/api/set_thresholds",{
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-            sensor: currentSensor,
-            temp_min: document.getElementById("tmin").value,
-            temp_max: document.getElementById("tmax").value,
-            hum_min: document.getElementById("hmin").value,
-            hum_max: document.getElementById("hmax").value
-        })
-    });
-
-    alert("Thresholds updated!");
-});
-
-
-/* --------------------
-   START EVERYTHING
--------------------- */
-loadLiveGraph();
-updateLiveReadings();
-updateLiveGraph();
-loadThresholds();
-
-setInterval(updateLiveReadings, 3000); // always live
-setInterval(updateLiveGraph, 3000);    // only if liveMode
-</script>
-{% endblock %}
+.dropdown:hover .dropdown-menu {
+    display: block;
+}
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left:0;
+    top:0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+}
+.modal-content {
+    background: white;
+    margin: 8% auto;
+    padding: 25px;
+    border-radius: 10px;
+    width: 500px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    animation: fadeIn 0.2s ease-in-out;
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+.tab-buttons{
+    display: flex;
+    margin-bottom: 10px;
+}
+.tab-btn {
+    flex: 1;
+    padding: 10px;
+    cursor: pointer;
+    border: 1px solid #ccc;
+    background: #eee;
+}
+.tab-btn.active {
+    background: #ddd;
+    font-weight: bold;
+}   
+.tab-content {
+    margin-top: 10px;
+}
+.close-btn {
+    float: right;
+    font-size: 22px;
+    cursor: pointer;
+}
+.threshold-groups {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 12px;
+}
+.general-groups {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 12px;
+}
+@keyframes fadeIn {
+    from {opacity: 0; transform: translateY(-10px);}
+    to {opacity: 1; transform: translateY(0);}
+}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+    </body>
+</html>
