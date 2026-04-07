@@ -5,7 +5,7 @@ import csv
 import io
 import json
 import os
-
+from collections import deque
 from dotenv import load_dotenv
 
 import mysql.connector
@@ -17,9 +17,13 @@ import smtplib
 from email.mime.text import MIMEText
 import os
 
+from logger import logger
+
 load_dotenv()
 
 SETTINGS_FILE = Path("settings.json")
+
+LOG_FILE = "/home/alekcoleman/Desktop/SystemLogger.log"
 
 def load_settings():
     if SETTINGS_FILE.exists():
@@ -33,8 +37,16 @@ def load_settings():
             "SEN0438:3": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
             "SEN0438:4": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
             "SEN0438:avg": {"temp_min": 65, "temp_max": 80, "hum_min": 0, "hum_max": 60},
-            "WARNING_BUFFER": 2.0,
-            "SENSOR-READING-INTERVAL": 4.0
+            "warning_buffer": 2.0,
+            "reading_interval": 4.0,
+            "SENSOR_NAMES" : {
+                "SEN0438:1": "Sensor 1",
+                "SEN0438:2": "Sensor 2",
+                "SEN0438:3": "Sensor 3",
+                "SEN0438:4": "Sensor 4",
+                "SEN0438:avg": "Room Average"
+            },
+            "email_alerts": True
         }
     
 def save_settings(settings):
@@ -45,10 +57,12 @@ EMAIL_HOST = os.environ.get("EMAIL_HOST")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASS = os.environ.get("EMAIL_PASS")
-ALERT_TO = os.environ.get("ALERT_TO")
+ALERT_TO = os.environ.get("ALERT_TO", "")
+ALERT_LIST = [email.strip() for email in ALERT_TO.split(",") if email.strip()]
 
-##WARNING_BUFFER = 2.0  # early warning range
+
 LAST_ALERT_STATE = {}
+LAST_LOG_STATE = {}
 
 
 def send_email_alert(sensor, alarms, temp, hum, timestamp):
@@ -62,7 +76,7 @@ Alarms: {', '.join(alarms)}
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From'] = EMAIL_USER
-    msg['To'] = ALERT_TO
+    msg['To'] = ", ".join(ALERT_LIST)
 
     try:
         server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
@@ -71,11 +85,16 @@ Alarms: {', '.join(alarms)}
         server.starttls()
         server.ehlo()
         server.login(EMAIL_USER, EMAIL_PASS)
-        server.send_message(msg)
+        server.sendmail(
+            EMAIL_USER,
+            ALERT_LIST,
+            msg.as_string()
+        )
         server.quit()
         print(f"Email sent: {sensor} {alarms}")
     except Exception as e:
         print("Failed to send email:", e)
+        logger.error(f"Failed to send email alert: {e}, Sensor: {sensor}, Alarms: {alarms}")
 
 
 
@@ -91,6 +110,13 @@ DB_PASS = os.environ.get("MYSQL_PASS", "env_pass")
 DB_NAME = os.environ.get("MYSQL_DB", "envmon")
 DEVICE_ID = os.environ.get("DEVICE_ID")  # optional filter by device/sensor
 
+def get_last_backup_time():
+    try:
+        with open("last_backup.txt") as f:
+            ts = f.read().strip()
+            return datetime.fromisoformat(ts)
+    except Exception:
+        return None
 def check_sensor_alarm(sensor, temp, hum):
 
     settings = load_settings()
@@ -100,7 +126,7 @@ def check_sensor_alarm(sensor, temp, hum):
         sensor,
         sensor_limits.get("SEN0438:avg", {})
     )
-    WARNING_BUFFER = settings.get("WARNING_BUFFER", 2.0)
+    WARNING_BUFFER = settings.get("warning_buffer", 2.0)
    
     alarms = []
     warnings = []
@@ -108,22 +134,29 @@ def check_sensor_alarm(sensor, temp, hum):
     # Temperature
     if temp >= limits["temp_max"]:
         alarms.append("TEMP HIGH")
+        
     elif temp <= limits["temp_min"]:
         alarms.append("TEMP LOW")
+        
     elif temp >= limits["temp_max"] - WARNING_BUFFER:
         warnings.append("Temp approaching HIGH")
+        
     elif temp <= limits["temp_min"] + WARNING_BUFFER:
         warnings.append("Temp approaching LOW")
-
+        
     # Humidity
     if hum >= limits["hum_max"]:
         alarms.append("HUM HIGH")
+        
     elif hum <= limits["hum_min"]:
         alarms.append("HUM LOW")
+        
     elif hum >= limits["hum_max"] - WARNING_BUFFER:
         warnings.append("Humidity approaching HIGH")
+       
     elif hum <= limits["hum_min"] + WARNING_BUFFER:
         warnings.append("Humidity approaching LOW")
+        
 
     return alarms, warnings
 
@@ -189,12 +222,13 @@ def load_data_from_db(sensor_id, start_dt=None, end_dt=None):
         conn.close()
     except Error as e:
         print("DB error while loading data:", e)
+        logger.error(f"Database error while loading data: {e}")
 
     return rows
 
 @app.route("/", methods=["GET"])
 def home():
-    settings = load_settings()  # ensure we have settings loaded
+    settings = load_settings()  
 
 
     sensor = request.args.get("sensor", "SEN0438:avg")
@@ -217,7 +251,7 @@ def home():
         ]
     else:
         filtered = data
-
+    last_backup = get_last_backup_time()
     labels = json.dumps([r["Time"].isoformat() for r in filtered])
     tempData = json.dumps([r["Temperature"] for r in filtered])
     humData = json.dumps([r["Humidity"] for r in filtered])
@@ -231,6 +265,7 @@ def home():
         humData=humData,
         sensor=sensor,
         settings = settings,
+        last_backup=last_backup,
         has_filter=bool(start_date and end_date)
     )
 
@@ -254,13 +289,14 @@ def download():
         writer.writerow([r["Time"].isoformat(), r["Temperature"], r["Humidity"]])
 
     output.seek(0)
-
+    logger.info(f"CSV was downloaded.")
     return send_file(
         io.BytesIO(output.getvalue().encode()),
         mimetype="text/csv",
         as_attachment=True,
         download_name="FilteredData.csv"
     )
+    
 @app.route("/data")
 def data():
   
@@ -314,18 +350,36 @@ def api_live():
             latest_sensor["Temperature"],
             latest_sensor["Humidity"]
         )
-
-        print(f"{sensor_id} -> Alarms: {alarms}, Warnings: {warnings}")
         if alarms:
-            if not LAST_ALERT_STATE.get(sensor_id, False):
-                send_email_alert(
-                    sensor_id,
-                    alarms,
-                    latest_sensor["Temperature"],
-                    latest_sensor["Humidity"],
-                    latest_sensor["Time"]
-                )
-                LAST_ALERT_STATE[sensor_id] = True
+            current_state = "ALARM"
+        elif warnings:
+            current_state = "WARNING"
+        else:
+            current_state = "NORMAL"
+        previous_state = LAST_LOG_STATE.get(sensor_id, "NORMAL")
+        if current_state != previous_state:
+            if current_state == "ALARM":
+                logger.error(f"{sensor_id} entered ALARM state: {alarms}")
+            elif current_state == "WARNING":
+                logger.warning(f"{sensor_id} entered WARNING state: {warnings}")
+            elif current_state == "NORMAL":
+                logger.info(f"{sensor_id} returned to NORMAL state")
+        LAST_LOG_STATE[sensor_id] = current_state
+        print(f"{sensor_id} -> Alarms: {alarms}, Warnings: {warnings}")
+        settings = load_settings()
+        if settings.get("email_alerts", True):
+            if alarms:
+                if not LAST_ALERT_STATE.get(sensor_id, False):
+                    send_email_alert(
+                        sensor_id,
+                        alarms,
+                        latest_sensor["Temperature"],
+                        latest_sensor["Humidity"],
+                        latest_sensor["Time"]
+                    )
+                    LAST_ALERT_STATE[sensor_id] = True
+            else:
+                LAST_ALERT_STATE[sensor_id] = False
         else:
             LAST_ALERT_STATE[sensor_id] = False
     return jsonify({
@@ -338,7 +392,9 @@ def api_live():
 
 @app.route("/api/get_thresholds")
 def get_thresholds_api():
+    sensor = request.args.get("sensor", "SEN0438:avg")
     settings = load_settings()
+
     sensor_limits = settings.get("SENSOR-LIMITS", {})
 
     limits = sensor_limits.get(
@@ -346,27 +402,29 @@ def get_thresholds_api():
         sensor_limits.get("SEN0438:avg", {})
     )
 
-    sensor = request.args.get("sensor", "SEN0438:avg")
-    return jsonify(limits.get(sensor, limits["SEN0438:avg"]))
+    return jsonify(limits)
 
-@app.route("/api/set_thresholds", methods=["POST"])
-def set_thresholds():
-    data = request.json
-    sensor = data["sensor"]
+@app.route("/api/update_settings", methods=["POST"])
+def update_settings():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "No data provided"}), 400
+        settings = load_settings()
+        settings["warning_buffer"] = float(data.get("warning_buffer") or 2.0)
+        settings["reading_interval"] = float(data.get("reading_interval") or 4.0)
+        settings["SENSOR_NAMES"] = data.get("sensor_name", {})
+        settings["email_alerts"] = bool(data.get("email_alerts", True))
 
-    settings = load_settings()
+        if "SENSOR-LIMITS" not in settings:
+            settings["SENSOR-LIMITS"] = {}
+        for sensor, limits in data.get("sensor_limits", {}).items():
+            settings["SENSOR-LIMITS"][sensor] = limits
+        save_settings(settings)
+        return jsonify({"Success": True}), 200
+    except Exception as e:
+        return jsonify({"Success": False}), 500
 
-    if "SENSOR-LIMITS" not in settings:
-        settings["SENSOR-LIMITS"] = {}
-
-    settings["SENSOR-LIMITS"][sensor] = {
-        "temp_min": float(data["temp_min"]),
-        "temp_max": float(data["temp_max"]),
-        "hum_min": float(data["hum_min"]),
-        "hum_max": float(data["hum_max"])
-    }
-
-    save_settings(settings)
 
 @app.route("/api/recent")
 def api_recent():
@@ -386,7 +444,22 @@ def api_recent():
         }
         for r in rows
     ])
+@app.route("/api/settings", methods=["GET"])
+def get_Settings():
+    settings = load_settings()
+    return jsonify(settings)
 
-
-
+@app.route("/api/last_backup")
+def api_last_backup():
+    last_backup = get_last_backup_time()
+    return {"last_backup": last_backup if last_backup else "Never"}
+@app.route("/api/logs")
+def api_logs():
+    try:
+        with open(LOG_FILE, "r") as f:
+            lines = deque(f, maxlen=30)
+            important = [line.strip() for line in lines if "ERROR" in line]
+            return jsonify(important)
+    except Exception as e:
+        return jsonify({"error": str(e)})
 if __name__ == "__main__":app.run(host="0.0.0.0", port=5000)
