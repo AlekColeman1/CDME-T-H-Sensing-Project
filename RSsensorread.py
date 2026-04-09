@@ -3,24 +3,60 @@ import time
 from db_logger import log_reading
 from FlaskSite import load_settings
 from logger import logger
+import os
 
 # List of sensor addresses to read from
 SENSOR_ADDRESSES = [1, 2, 3, 4]
+
+PORT = '/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0'        # Serial port for RS485 adapter
 
 # Track connection state to avoid repeated error logging
 last_connection_state = True
 
 # Track per-sensor error state to avoid repeated error logging
 sensor_error_state = {}
-# Configure RS485 connection
-client = ModbusSerialClient(
-    port='/dev/ttyUSB0',        # Serial port for RS485 adapter
-    baudrate=9600,
-    parity='N',
-    stopbits=1,
-    bytesize=8,
-    timeout=1
-)
+
+def create_client():
+    # Configure RS485 connection
+    return ModbusSerialClient(
+        port=PORT,
+        baudrate=9600,
+        parity='N',
+        stopbits=1,
+        bytesize=8,
+        timeout=1
+    )
+
+# Track device connection
+client = None
+
+def ensure_connection():
+    # Ensure device is connected
+    global client
+
+    if not os.path.exists(PORT):
+        if client:
+            try:
+                client.close()
+            except:
+                pass
+            client = None
+        return False
+    if client is None:
+        client = create_client()
+    try:
+        if client.connect():
+            return True
+        else:
+            logger.error("Connection failed")
+    except Exception as e:
+        print(f"Connection error: {e}")
+        try:
+            client.close()
+        except:
+            pass
+        client = None
+        return False
 
 # Convert Celsius to Fahrenheit
 def c_to_f(c):
@@ -34,7 +70,11 @@ def read_sensor(address):
     Returns:
         (temperature, humidity) tuple if successful, None if error
     """
+    global client
     try:
+        if client is None:
+            return None
+        
         response = client.read_holding_registers(
             address=0x0000,        #Starting register address
             count=2,               #Number of registers to read (temp + humidity)
@@ -70,6 +110,11 @@ def read_sensor(address):
             print(f"Exception reading sensor {address}: {e}")
             logger.error(f"Exception reading sensor {address}: {e}")
             sensor_error_state[address] = True
+        try:
+            client.close()
+        except:
+            pass
+        client = None
         return None
 
 
@@ -79,31 +124,13 @@ try:
         Manages connection to RS485 device
         Allows for automatic reconnection if connection is lost, with logging of connection status changes
         """
-        if not client.connect():
-            try:
-                connected = client.connect()
-                if connected:
-                    # Log reconnection only on state change
-                    if not last_connection_state:
-                        print("RS485 connection re-established.")
-                        logger.info("RS485 connection re-established.")
-                    last_connection_state = True
-                else:
-                    if last_connection_state:
-                        # Log disconnection only on state change
-                        print("Lost connection to RS485 device")
-                        logger.error("Lost connection to RS485 device")
-                    last_connection_state = False
-                    time.sleep(5)
-                    continue
-            except Exception as e:
-                # Log exception during reconnect attempts
-                if last_connection_state:
-                    print(f"Error connecting to RS485 device: {e}")
-                    logger.error(f"Error connecting to RS485 device: {e}")
-                last_connection_state = False
-                time.sleep(5)
-                continue
+        
+        if not ensure_connection():
+            print("Waiting for RS485 device...")
+            time.sleep(5)
+            continue
+
+        
         print("----- Sensor Readings -----")
 
         # Load settings
@@ -116,7 +143,7 @@ try:
         # Take 10 readings from each sensor, 3 seconds apart
         # This makes each sensor reading more accurate
         # This is also why the time between readings is 30 seconds if reading interval is set to 0
-        for i in range(10):
+        for i in range(1):
             for addr in SENSOR_ADDRESSES:
                 result = read_sensor(addr)
                 if result is None:
@@ -177,4 +204,8 @@ except KeyboardInterrupt:
     print("Stopping...")
 
 finally:
-    client.close()
+    if client is not None:
+        try:
+            client.close()
+        except:
+            pass
