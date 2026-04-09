@@ -1,0 +1,70 @@
+sudo nano /etc/systemd/system/sensor.service
+[Unit]
+Description=Start reading from sensors on boot
+After=network.target
+
+[Service]
+ExecStart=/home/alekcoleman/Desktop/source_code/venv/bin/python /home/alekcolem/Desktop/source_code/RSsensorread.py
+WorkingDirectory=/home/alekcoleman/Desktop/source_code
+Environment="PATH=/home/alekcoleman/Desktop/source_code/venv/bin"
+Restart=always
+RestartSec=5
+User=alekcoleman
+
+[Install]
+WantedBy=multi-user.target
+sudo nano /etc/systemd/system/flask.service
+[Unit]
+Description=Start flask on boot
+After=network.target
+
+[Service]
+ExecStart=/home/alekcoleman/Desktop/source_code/venv/bin/python /home/alekcoleman/Desktop/source_code/FlaskSite.py
+WorkingDirectory=/home/alekcoleman/Desktop/source_code
+Environment="PATH=/home/alekcoleman/Desktop/source_code/venv/bin"
+Restart=always
+RestartSec=5
+User=alekcoleman
+
+[Install]
+WantedBy=multi-user.target
+sudo nano /etc/systemd/system/kiosk.service
+[Unit]
+Description=Open site on boot
+After=graphical.target flask.service
+
+[Service]
+User=alekcoleman
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/alekcoleman/.Xauthority
+ExecStart=/bin/bash -c "sleep 2 && /usr/bin/chromium --new-window http://localhost:5000"
+Restart=always
+
+[Install]
+WantedBy=graphical.target
+sudo nano /etc/systemd/system/databackup.service
+[Unit]
+Description=Database Backup Script
+
+[Service]
+Type=oneshot
+ExecStart=/home/alekcoleman/Desktop/source_code/venv/bin/python /home/alekcoleman/Desktop/source_code/db_backup.py
+WorkingDirectory=/home/alekcoleman/Desktop/source_code
+User=alekcoleman
+
+sudo nano /etc/systemd/system/databackup.timer
+[Unit]
+Description=Run database backup every 60 days
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=60d
+Persistent=true
+Unit=databackup.service
+
+[Install]
+WantedBy=timers.target
+
+
+
+
