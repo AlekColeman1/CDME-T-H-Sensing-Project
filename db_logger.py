@@ -1,7 +1,8 @@
 from dotenv import load_dotenv
 import os
 import mysql.connector
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 load_dotenv()
 
@@ -25,11 +26,11 @@ def log_reading(sensor_id: str, temp_c: float, humidity_pct: float):
     conn = get_conn()
     cur = conn.cursor()
 
-    ts = datetime.now(timezone.utc)
+    ts = datetime.now(ZoneInfo("America/New_York"))
 
     sql = """
         INSERT INTO readings (device_id, sensor_id, ts, temperature_c, humidity_pct)
-        VALUES (%s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s)
     """
 
     cur.execute(sql, (DEVICE_ID, sensor_id, ts, float(temp_c), float(humidity_pct)))
@@ -37,5 +38,3 @@ def log_reading(sensor_id: str, temp_c: float, humidity_pct: float):
     conn.commit()
     cur.close()
     conn.close()
-
-
