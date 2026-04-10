@@ -4,12 +4,12 @@ Description=Start reading from sensors on boot
 After=network.target
 
 [Service]
-ExecStart=/home/alekcoleman/Desktop/source_code/venv/bin/python /home/alekcolem/Desktop/source_code/RSsensorread.py
-WorkingDirectory=/home/alekcoleman/Desktop/source_code
-Environment="PATH=/home/alekcoleman/Desktop/source_code/venv/bin"
+ExecStart=/home/cdme/Desktop/source_code/.venv/bin/python /home/cdme/Desktop/source_code/RSsensorread.py
+WorkingDirectory=/home/cdme/Desktop/source_code
+Environment="PATH=/home/cdme/Desktop/source_code/venv/bin"
 Restart=always
 RestartSec=5
-User=alekcoleman
+User=cdme
 
 [Install]
 WantedBy=multi-user.target
@@ -19,12 +19,12 @@ Description=Start flask on boot
 After=network.target
 
 [Service]
-ExecStart=/home/alekcoleman/Desktop/source_code/venv/bin/python /home/alekcoleman/Desktop/source_code/FlaskSite.py
-WorkingDirectory=/home/alekcoleman/Desktop/source_code
-Environment="PATH=/home/alekcoleman/Desktop/source_code/venv/bin"
+ExecStart=/home/cdme/Desktop/source_code/.venv/bin/python /home/cdme/Desktop/source_code/FlaskSite.py
+WorkingDirectory=/home/cdme/Desktop/source_code
+Environment="PATH=/home/cdme/Desktop/source_code/venv/bin"
 Restart=always
 RestartSec=5
-User=alekcoleman
+User=cdme
 
 [Install]
 WantedBy=multi-user.target
@@ -34,10 +34,10 @@ Description=Open site on boot
 After=graphical.target flask.service
 
 [Service]
-User=alekcoleman
+User=cdme
 Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/alekcoleman/.Xauthority
-ExecStart=/bin/bash -c "sleep 2 && /usr/bin/chromium --new-window http://localhost:5000"
+Environment=XAUTHORITY=/home/cdme/.Xauthority
+ExecStart=/bin/bash -c "sleep 2 && /usr/bin/chromium --new-window --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-features=SessionCrashedBubble http://localhost:5000"
 Restart=always
 
 [Install]
@@ -48,9 +48,9 @@ Description=Database Backup Script
 
 [Service]
 Type=oneshot
-ExecStart=/home/alekcoleman/Desktop/source_code/venv/bin/python /home/alekcoleman/Desktop/source_code/db_backup.py
-WorkingDirectory=/home/alekcoleman/Desktop/source_code
-User=alekcoleman
+ExecStart=/home/cdme/Desktop/source_code/.venv/bin/python /home/cdme/Desktop/source_code/db_backup.py
+WorkingDirectory=/home/cdme/Desktop/source_code
+User=cdme
 
 sudo nano /etc/systemd/system/databackup.timer
 [Unit]
