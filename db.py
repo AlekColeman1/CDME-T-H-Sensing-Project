@@ -1,7 +1,9 @@
 from dotenv import load_dotenv
 import os
 import mysql.connector
-
+"""
+This file is to show contents of database only
+"""
 load_dotenv()
 
 HOST = os.environ["MYSQL_HOST"]
