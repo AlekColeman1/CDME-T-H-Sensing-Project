@@ -17,7 +17,7 @@ load_dotenv()
 
 # Specify path to settings file and log file 
 SETTINGS_FILE = Path("settings.json")
-LOG_FILE = "/home/alekcoleman/Desktop/SystemLogger.log"
+LOG_FILE = "/home/cdme/Desktop/SystemLogger.log"
 
 # Cache settings in memory to avoid file I/O on every read
 SETTINGS_CACHE = None
