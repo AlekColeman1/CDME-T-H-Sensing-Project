@@ -1,6 +1,6 @@
 import logging
 
-LOG_DIR = "/home/alekcoleman/Desktop/SystemLogger.log"
+LOG_DIR = "/home/cdme/Desktop/SystemLogger.log"
 
 logger = logging.getLogger("SystemLogger")
 logger.setLevel(logging.INFO)
